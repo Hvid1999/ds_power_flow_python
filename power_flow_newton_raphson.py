@@ -85,43 +85,41 @@ def setup_buses():
     pass #create array of buses (class) from input data
 
 
-def initialize_system(n_buses, ybus, pset, qset, v_input = False, vset = 0):
+def initialize_system(ybus, pset, qset, pv_idx, vset):
     ### INCOMPLETE
 
     #load_adm_mat()
     #setup_buses()
 
-
-    #Note: pset = (P_G - P_L)
+    #Note: pset = (P_G - P_L) 
+    n_buses = ybus.shape[0]
     g = np.real(ybus)
     b = np.imag(ybus)
-    delta = np.zeros((n_buses,1))
 
-    if v_input: #if there is voltage magnitude input data (PV-busses)
-        vmag = vset
-    else:
-        vmag = np.ones((n_buses,1)) #this standard case should depend on whether there are more PV-busses than the slack bus?
-    
-    x = np.row_stack((delta,vmag))
-    
-    #Setup initial power mismatch vector delta_y
-    p = np.zeros((n_buses,1))
-    q = np.zeros((n_buses,1))
-    y = np.zeros((n_buses,1))
-    calculate_power_vecs(n_buses, vmag, delta, b, g, p, q)
-    update_mismatch_vector(y, n_buses, p, q, pset, qset)
+    #unknown variables vector
+    vmag = np.ones((n_buses - 1 - np.size(pv_idx),1))
+    delta = np.zeros((n_buses-1,1))
+
+    #Setup initial power vectors
+    p = np.zeros((n_buses - 1,1))
+    del_p = np.zeros((n_buses - 1,1))
+    q = np.zeros((n_buses - 1 - np.size(pv_idx),1))
+    del_q = np.zeros((n_buses - 1 - np.size(pv_idx),1))
 
     #Setup initial jacobian
     jacobian = np.zeros((2*(n_buses-1),2*(n_buses-1)))
-    calculate_jacobian(n_buses, jacobian, vmag, delta, g, b, p, q)
 
-    return jacobian, y, x, g, b, p, q
+    #vectors containing voltage magnitude and angle information on all busses
+    vmag_full = np.ones((n_buses,1))
+    delta_full = np.zeros((n_buses,1))
+    if np.size(pv_idx) != 0:
+        vmag_full[pv_idx] = vset
+
+    return jacobian, n_buses, vmag, delta, vmag_full, delta_full, g, b, p, q, del_p, del_q
     
         
 
 def calculate_jacobian(n_buses, jacobian, vmag, delta, g, b, p, q):
-       
-    #recalculate Jacobian matrix based on new iterative values
 
     #Pointing to the submatrices
     j1 = jacobian[0:(n_buses-1),0:(n_buses-1)]
@@ -144,12 +142,13 @@ def calculate_jacobian(n_buses, jacobian, vmag, delta, g, b, p, q):
                 j3[k-1][n-1] = vmag[k] * (g[k][n]*(np.cos(delta[k] - delta[n])) + b[k][n]*np.sin(delta[k] - delta[n]))
                 j4[k-1][n-1] = vmag[k] * (g[k][n]*(np.sin(delta[k] - delta[n])) - b[k][n]*np.cos(delta[k] - delta[n]))
 
-def calculate_power_vecs(n_buses, vmag, delta, b, g, p, q):
-    
-    
-    ###Note! (should account for whether bus is load or generation (+/- on pset/qset))
+def calculate_power_vecs(n_buses, vmag, delta, b, g, pv_idx):
+    ###Note! (should probably account for whether bus is load or generation (+/- on pset/qset))
 
-
+    #vectors with possibility for containing information about every bus
+    p_full = np.zeros((n_buses,1))
+    q_full = np.zeros((n_buses,1))
+    
     #k ignores the first index which is the slack bus
     for k in range(1,n_buses): #k ignores the first index which is the slack bus
         psum = 0
@@ -157,26 +156,30 @@ def calculate_power_vecs(n_buses, vmag, delta, b, g, p, q):
         for n in range(n_buses):
             psum += vmag[n] * (g[k][n]*(np.cos(delta[k] - delta[n])) + b[k][n]*np.sin(delta[k] - delta[n]))
             qsum += vmag[n] * (g[k][n]*(np.sin(delta[k] - delta[n])) - b[k][n]*np.cos(delta[k] - delta[n]))
-        p[k] = vmag[k] * psum
-        q[k] = vmag[k] * qsum
+        p_full[k] = vmag[k] * psum
+        q_full[k] = vmag[k] * qsum
+
+    if np.size(pv_idx) != 0:
+        q = np.delete(q_full[1:], pv_idx - 1, 0) #removing the pv bus indices after calculation
+    else:
+        q = q_full[1:]
+    p = p_full[1:] #removing slack bus index
+    return p, q, p_full, q_full
 
 
-def update_mismatch_vector(y, n_buses, p, q, pset, qset):
-    y[0:n_buses-1] = pset[1:] - p[1:]
-    y[n_buses-1:] = qset[1:] - q[1:]
+def update_mismatch_vector(p, q, pset, qset):
+    del_p = pset - p
+    del_q = qset - q
+    return del_p, del_q
 
 
-def next_iteration(jacobian, x, y, n_buses, b, g, p, q, pset, qset):
-    x_temp = np.delete(x, [0,n_buses], 0) #excluding slack bus
-    x_next = x_temp + np.matmul(np.linalg.inv(jacobian), y) #calculating next iteration
-    #overwriting values in x except slack bus
-    x[1:n_buses] = x_next[0:n_buses-1] 
-    x[n_buses+1:] = x_next[n_buses-1:]
-
-    #calculating new mismatch vector and Jacobian
-    calculate_power_vecs(n_buses, x[n_buses:2*n_buses], x[0:n_buses], b, g, p, q)
-    y = update_mismatch_vector(y, n_buses, p, q, pset, qset)
-    calculate_jacobian(n_buses, jacobian, x[n_buses:2*n_buses], x[0:n_buses], g, b, p, q)
+def next_iteration(jacobian, vmag, delta, del_p, del_q):
+    x = np.row_stack((delta, vmag))
+    y = np.row_stack((del_p, del_q))
+    x_next = x + np.matmul(np.linalg.inv(jacobian), y) #calculating next iteration
+    delta_next = x_next[0:np.size(delta)]
+    vmag_next = x_next[np.size(delta):]
+    return delta_next, vmag_next
     
 
 def check_convergence(y, threshold):
@@ -187,27 +190,34 @@ def check_convergence(y, threshold):
 def check_pv_bus(buses, q, pv_recalc_flag=False):
     #check if PV bus reactive power is within specified limits
     #if not, set bus(es) to PQ at Q limit and compute bus voltage
-    for bus in buses:
-        if bus.type == 'pv':
-            if np.absolute(q[bus]) > bus.qlim:
-                bus.type = 'pq'
-                bus.q = bus.qlim
-                print("Bus %d reactive power limit violated. Changed to PQ." % bus)
-                pv_recalc_flag = True
+    pass
 
+
+def simplify_jacobian(n_buses, pv_idx, jacobian): 
+    #simplifies jacobian matrix in the presence of PV-busses by deleting rows and columns
+    if pv_idx.size != 0:
+        jacobian_calc = np.delete(jacobian, pv_idx + n_buses - 2, 0) #n - 2 because bus 1 is index 0 in the jacobian matrix
+        jacobian_calc = np.delete(jacobian_calc, pv_idx + n_buses - 2, 1) #and the submatrices are (n-1) * (n-1)
+    else:
+        jacobian_calc = jacobian
+    return jacobian_calc
 
 class Bus:
     ##INCOMPLETE
     
     #constructor
-    def __init__(self, type='pq', p=0, q=0, v=0, delta=0, qlim=0, gen = False):
+    def __init__(self, type='pq', pset=0, qset=0, vset=0, qlim=0, gen = False):
         self.type = type
-        self.pinj = p
-        self.qinj = q
-        self.vmag = v
-        self.delta = delta  
-        self.qlim = qlim
         self.gen = gen #generator?
+        self.pset = pset
+        self.qset = qset
+
+        if vset == 0:
+            self.vset = 1.0
+        else:
+            self.vset = vset
+        
+        self.qlim = qlim
     
     def __repr__(self):
         s = "Type: " + self.type.upper() + "\n" 
