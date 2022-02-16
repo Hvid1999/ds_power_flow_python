@@ -1,54 +1,19 @@
 """
-Pseudocode:
+PSEUDOCODE
 
 
+----------------------------------------------------------------------------------
 FUNCTIONS:
-
-
-MAYBE THE INITIALIZING FUNCTION SHOULD BE SPLIT INTO SEVERAL FUNCTIONS AND CALL EACH OF THEM:
-    Function 1: Create Y_bus
-    Function 2: Setup initial values and bus types with power limits
-    Function 3: Initial iteration of power mismatch 
-              (should account for whether bus is load or generation (+/- on pset/qset))
-    Function 4: Setup Jacobian
-
-
-def initialize_system(, custom_initial = False):
-    Load system bus admittance matrix
-    Define system size - N buses
-    Load input data values for P, Q, V, delta
-    Load system limits for real and reactive power
-    Setup initial guesses - custom or standard (1.0 mag and 0.0 angle)
-    Setup initial power mismatch vector delta_y
-    Setup initial Jacobian matrix (dimensions)
-
-
-def calculate_Jacobian(n_buses, jacobian, x, adm_mat):
-    recalculate Jacobian matrix based on new iterative values
-
-    Slicing the jacobian in order to handle the submatrices
-
-    Diagonal elements
-
-    Off-diagonal elements
-
-
-def next_iteration():
-    Invert the Jacobian - for now, faster methods are not necessary
-    Solve for x(i+1)
-    Return new x-vector
-
-def check_convergence():
-    check for convergence based on power mismatches and tolerance level
-    return boolean
 
 def pv_bus_check():
     calculate reactive power Q at PV-busses and check if within predefined limits
-    if not, set bus to PQ at Q limit and compute bus voltage
+    if not, set bus to PQ at Q limit and redo the power flow
 
 
 
+----------------------------------------------------------------------------------
 CLASSES:
+
 
 class Bus:
     Contains the following information:
@@ -57,15 +22,6 @@ class Bus:
         Reactive power injection
         Voltage magnitude
         Voltage phase angle
-
-(...
-class Generator:
-    Contains the following information:
-        Bus index placement
-        Power setpoints
-        Reactive power limits
-        (slack participation factor)
-...)
 
 ...
 
@@ -138,9 +94,18 @@ def calculate_jacobian(n_buses, jacobian, vmag, delta, g, b, p, q):
 
             else: #off-diagonal elements
                 j1[k-1][n-1] = vmag[k] * vmag[n] * (g[k][n]*(np.sin(delta[k] - delta[n])) - b[k][n]*np.cos(delta[k] - delta[n]))
-                j2[k-1][n-1] = -vmag[k] * vmag[n] * (g[k][n]*(np.cos(delta[k] - delta[n])) + b[k][n]*np.sin(delta[k] - delta[n]))
-                j3[k-1][n-1] = vmag[k] * (g[k][n]*(np.cos(delta[k] - delta[n])) + b[k][n]*np.sin(delta[k] - delta[n]))
+                j2[k-1][n-1] = vmag[k] * (g[k][n]*(np.cos(delta[k] - delta[n])) + b[k][n]*np.sin(delta[k] - delta[n]))
+                j3[k-1][n-1] = -vmag[k] * vmag[n] * (g[k][n]*(np.cos(delta[k] - delta[n])) + b[k][n]*np.sin(delta[k] - delta[n]))
                 j4[k-1][n-1] = vmag[k] * (g[k][n]*(np.sin(delta[k] - delta[n])) - b[k][n]*np.cos(delta[k] - delta[n]))
+
+def simplify_jacobian(n_buses, pv_idx, jacobian): 
+    #simplifies jacobian matrix in the presence of PV-busses by deleting rows and columns
+    if pv_idx.size != 0:
+        jacobian_calc = np.delete(jacobian, pv_idx + n_buses - 2, 0) #n - 2 because bus 1 is index 0 in the jacobian matrix
+        jacobian_calc = np.delete(jacobian_calc, pv_idx + n_buses - 2, 1) #and the submatrices are (n-1) * (n-1)
+    else:
+        jacobian_calc = jacobian
+    return jacobian_calc
 
 def calculate_power_vecs(n_buses, vmag, delta, b, g, pv_idx):
     ###Note! (should probably account for whether bus is load or generation (+/- on pset/qset))
@@ -187,20 +152,14 @@ def check_convergence(y, threshold):
     return np.all(np.absolute(y) < threshold) 
 
 
-def check_pv_bus(buses, q, pv_recalc_flag=False):
+def check_pv_bus(pv_idx, pq_idx, qlim):
     #check if PV bus reactive power is within specified limits
-    #if not, set bus(es) to PQ at Q limit and compute bus voltage
+    #if not, set bus(es) to PQ at Q limit and return a bool to specify whether recalculation should be performed
     pass
 
 
-def simplify_jacobian(n_buses, pv_idx, jacobian): 
-    #simplifies jacobian matrix in the presence of PV-busses by deleting rows and columns
-    if pv_idx.size != 0:
-        jacobian_calc = np.delete(jacobian, pv_idx + n_buses - 2, 0) #n - 2 because bus 1 is index 0 in the jacobian matrix
-        jacobian_calc = np.delete(jacobian_calc, pv_idx + n_buses - 2, 1) #and the submatrices are (n-1) * (n-1)
-    else:
-        jacobian_calc = jacobian
-    return jacobian_calc
+##############################################################################################
+#CLASSES:
 
 class Bus:
     ##INCOMPLETE

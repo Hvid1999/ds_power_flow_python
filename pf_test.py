@@ -1,14 +1,17 @@
 import power_flow_newton_raphson as pf
 import numpy as np
 
-##Working example: Vittal example 10.6
-#Realized that it was probably wiser to program using the vectors 
-#v, delta, d_p, d_q and stack them when necessary for calculations
 
+# To be written: Tests comparing custom solver results to PandaPower results using their test cases
+# Will probably need to implement a function to check reactive power limits for PV busses
+###################################################################################################
+
+""" 
 ##initialization
 slack_bus_idx = 0 #slack bus placement - bus 1 is bus 0 in the code
 pv_idx = np.array([1])
 iteration_limit = 15
+tolerance = 0.001 #tolerance level for error
 
 #bus admittance matrix and system size
 ybus = np.array([[complex(0,-19.98),complex(0,10),complex(0,10)],[complex(0,10),complex(0,-19.98),complex(0,10)],[complex(0,10),complex(0,10),complex(0,-19.98)]])
@@ -43,26 +46,35 @@ jacobian_calc = pf.simplify_jacobian(n_buses, pv_idx, jacobian)
 print("J: \n", np.round(jacobian_calc, 2))
 
 
-""" #calculate next iteration of voltage magnitude and phase angle
-(delta, vmag) = pf.next_iteration(jacobian_calc, vmag, delta, del_p, del_q)
-print("delta_next:\n", delta * 180/np.pi)
-print("vmag_next:\n", vmag) """
-
-
 for i in range(1, iteration_limit + 1):
     (delta, vmag) = pf.next_iteration(jacobian_calc, vmag, delta, del_p, del_q)
     #Calculating initial power vectors
     delta_full[1:] = delta
     vmag_full[2] = vmag #PLACEHOLDER - NEEDS LOGIC FOR OTHER SIZES!!!
     (p, q, p_full, q_full) = pf.calculate_power_vecs(n_buses, vmag_full, delta_full, b, g, pv_idx)
+
+    pf.calculate_jacobian(n_buses, jacobian, vmag_full, delta_full, g, b, p_full, q_full)
+    #simplify Jacobian according to PV-busses
+    jacobian_calc = pf.simplify_jacobian(n_buses, pv_idx, jacobian)
+
     (del_p, del_q) = pf.update_mismatch_vector(p, q, pset, qset)
     y = np.row_stack((del_p, del_q))
-    if pf.check_convergence(y, 0.001):
+
+    print("\nIteration %d:\n" % i)
+    print("delta:\n",delta * 180/np.pi)
+    print("vmag:\n",vmag)
+    print("mismatch vector:\n", y)
+    print("Jacobian:\n", jacobian_calc)
+
+    if pf.check_convergence(y, tolerance):
         print("Power flow converged at %d iterations.\n" % i)
         print("delta:\n",delta * 180/np.pi)
         print("vmag:\n",vmag)
+        print("Real power flows excluding slack:\n", p_full[1:])
+        print("Reactive power flows excluding slack:\n", q_full[1:])
         print("mismatch vector:\n", y)
         break
     
     elif i == iteration_limit:
         print("Power flow did not converge after %d iterations.\n" % i )
+ """

@@ -1,26 +1,29 @@
 import power_flow_newton_raphson as pf
 import numpy as np
 
-##Working example: Lecture 7 (2-bus system)
+##Working example: Vittal example 10.6
 #Realized that it was probably wiser to program using the vectors 
 #v, delta, d_p, d_q and stack them when necessary for calculations
 
 ##initialization
 slack_bus_idx = 0 #slack bus placement - bus 1 is bus 0 in the code
-pv_idx = np.array([]) #the system has no PV-busses, so an empty array is initialized
-
+pv_idx = np.array([1])
 iteration_limit = 15
-tolerance = 0.001 #tolerance level for mismatches
+tolerance = 0.001 #tolerance level for error
 
-ybus = np.array([[complex(0,-10),complex(0,10)],[complex(0,10),complex(0,-10)]])
+#bus admittance matrix and system size
+ybus = np.array([[complex(0,-19.98),complex(0,10),complex(0,10)],[complex(0,10),complex(0,-19.98),complex(0,10)],[complex(0,10),complex(0,10),complex(0,-19.98)]])
+
 #power and voltage setpoints
-pset = np.array([-2.0]) #P setpoints as injections for every bus except slack bus in ascending bus order
-qset = np.array([-1.0]) #Q setpoints as injections for every bus except slack bus and PV buses in ascending bus order
+pset = np.array([0.6661, -2.8653]) #P setpoints as injections for every bus except slack bus in ascending bus order
+qset = np.array([-1.2244]) #Q setpoints as injections for every bus except slack bus and PV buses in ascending bus order
+vset = np.array([1.05]) #voltage setpoints for every PV bus in ascending bus order
+vset.shape = (np.size(vset),1)
 qset.shape = (np.size(qset),1)
 pset.shape = (np.size(pset),1)
 
 #setup system variables
-(jacobian, n_buses, vmag, delta, vmag_full, delta_full, g, b, p, q, del_p, del_q) = pf.initialize_system(ybus, pset, qset, pv_idx, 0)
+(jacobian, n_buses, vmag, delta, vmag_full, delta_full, g, b, p, q, del_p, del_q) = pf.initialize_system(ybus, pset, qset, pv_idx, vset)
 
 #noting indices of PQ-busses based on slack bus and PV-bus indices  
 pq_idx = np.arange(n_buses, dtype=int)
@@ -44,9 +47,10 @@ print("J: \n", np.round(jacobian_calc, 2))
 for i in range(1, iteration_limit + 1):
     (delta, vmag) = pf.next_iteration(jacobian_calc, vmag, delta, del_p, del_q)
     #Calculating initial power vectors
+    
     delta_full[1:] = delta #updating voltage angles on all busses except slack
     vmag_full[pq_idx] = vmag #updating voltage magnitudes on PQ-busses
-
+    
     (p, q, p_full, q_full) = pf.calculate_power_vecs(n_buses, vmag_full, delta_full, b, g, pv_idx)
 
     pf.calculate_jacobian(n_buses, jacobian, vmag_full, delta_full, g, b, p_full, q_full)
