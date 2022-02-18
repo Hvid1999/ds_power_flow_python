@@ -41,7 +41,10 @@ pf.calculate_jacobian(n_buses, jacobian, vmag_full, delta_full, g, b, p_full, q_
 
 #simplify Jacobian according to PV-busses
 jacobian_calc = pf.simplify_jacobian(n_buses, pv_idx, jacobian)
-print("J: \n", np.round(jacobian_calc, 2))
+
+# =============================================================================
+# print("J: \n", np.round(jacobian_calc, 2))
+# =============================================================================
 
 
 for i in range(1, iteration_limit + 1):
@@ -60,18 +63,20 @@ for i in range(1, iteration_limit + 1):
     (del_p, del_q) = pf.update_mismatch_vector(p, q, pset, qset)
     y = np.row_stack((del_p, del_q))
 
-    print("\nIteration %d:\n" % i)
-    print("delta:\n",delta * 180/np.pi)
-    print("vmag:\n",vmag)
-    print("mismatch vector:\n", y)
-    print("Jacobian:\n", jacobian_calc)
+# =============================================================================
+#     print("\nIteration %d:\n" % i)
+#     print("delta:\n",delta * 180/np.pi)
+#     print("vmag:\n",vmag)
+#     print("mismatch vector:\n", y)
+#     print("Jacobian:\n", jacobian_calc)
+# =============================================================================
 
     if pf.check_convergence(y, tolerance):
         print("Power flow converged at %d iterations.\n" % i)
         print("delta:\n",delta * 180/np.pi)
         print("vmag:\n",vmag)
-        print("Real power flows excluding slack:\n", p_full[1:])
-        print("Reactive power flows excluding slack:\n", q_full[1:])
+        print("Real power flows:\n", p_full)
+        print("Reactive power flows:\n", q_full)
         print("mismatch vector:\n", y)
         break
     

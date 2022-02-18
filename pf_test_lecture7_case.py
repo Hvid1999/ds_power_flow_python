@@ -66,8 +66,8 @@ for i in range(1, iteration_limit + 1):
         print("Power flow converged at %d iterations.\n" % i)
         print("delta:\n",delta * 180/np.pi)
         print("vmag:\n",vmag)
-        print("Real power flows excluding slack:\n", p_full[1:])
-        print("Reactive power flows excluding slack:\n", q_full[1:])
+        print("Real power flows:\n", p_full)
+        print("Reactive power flows:\n", q_full)
         print("mismatch vector:\n", y)
         break
     

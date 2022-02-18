@@ -1,44 +1,8 @@
-"""
-PSEUDOCODE
-
-
-----------------------------------------------------------------------------------
-FUNCTIONS:
-
-def pv_bus_check():
-    calculate reactive power Q at PV-busses and check if within predefined limits
-    if not, set bus to PQ at Q limit and redo the power flow
-
-
-
-----------------------------------------------------------------------------------
-CLASSES:
-
-
-class Bus:
-    Contains the following information:
-        Bus type - slack, pv, pq
-        Real power injection
-        Reactive power injection
-        Voltage magnitude
-        Voltage phase angle
-
-...
-
-"""
-
-
-##Implementation
-
 import numpy as np
 
-def load_adm_mat():
-    pass #placeholder - should probably load from file
-    #return ymag, theta
+def load_system():
+    pass #loads the relevant information - setpoints, busses, ybus etc.
 
-def setup_buses():
-    #Setup initial values and bus types with power limits
-    pass #create array of buses (class) from input data
 
 
 def initialize_system(ybus, pset, qset, pv_idx, vset):
@@ -107,6 +71,8 @@ def simplify_jacobian(n_buses, pv_idx, jacobian):
         jacobian_calc = jacobian
     return jacobian_calc
 
+
+
 def calculate_power_vecs(n_buses, vmag, delta, b, g, pv_idx):
     ###Note! (should probably account for whether bus is load or generation (+/- on pset/qset))
 
@@ -115,7 +81,7 @@ def calculate_power_vecs(n_buses, vmag, delta, b, g, pv_idx):
     q_full = np.zeros((n_buses,1))
     
     #k ignores the first index which is the slack bus
-    for k in range(1,n_buses): #k ignores the first index which is the slack bus
+    for k in range(n_buses): 
         psum = 0
         qsum = 0
         for n in range(n_buses):
@@ -132,10 +98,13 @@ def calculate_power_vecs(n_buses, vmag, delta, b, g, pv_idx):
     return p, q, p_full, q_full
 
 
+
+
 def update_mismatch_vector(p, q, pset, qset):
     del_p = pset - p
     del_q = qset - q
     return del_p, del_q
+
 
 
 def next_iteration(jacobian, vmag, delta, del_p, del_q):
@@ -147,9 +116,21 @@ def next_iteration(jacobian, vmag, delta, del_p, del_q):
     return delta_next, vmag_next
     
 
+
 def check_convergence(y, threshold):
     #returns true if all indices in mismatch vector are below error threshold (tolerance)
     return np.all(np.absolute(y) < threshold) 
+
+
+def validate_solution():
+    pass #calculates power injections based on solution and compares to known values
+    
+
+def calc_line_flows():
+    #Line flows: Current, real, reactive, apparent power at each end of lines
+    #P_ft, Ptf, Q_ft, Q_tf, I_ft, I_tf, S_ft, S_tf
+    #where ft = from/to and tf = to/from
+    pass 
 
 
 def check_pv_bus(pv_idx, pq_idx, qlim):
@@ -160,25 +141,32 @@ def check_pv_bus(pv_idx, pq_idx, qlim):
 
 ##############################################################################################
 #CLASSES:
-
-class Bus:
-    ##INCOMPLETE
     
-    #constructor
-    def __init__(self, type='pq', pset=0, qset=0, vset=0, qlim=0, gen = False):
-        self.type = type
-        self.gen = gen #generator?
-        self.pset = pset
-        self.qset = qset
+#CONSIDER DICTIONARIES FOR STORING AND UPDATING DATA
 
-        if vset == 0:
-            self.vset = 1.0
-        else:
-            self.vset = vset
-        
-        self.qlim = qlim
+class Load:
+    def __init__(self, bus=0, pset=0, qset=0, name=''):
+        self.bus = bus
+        self.p = pset
+        self.q = qset
+        self.name = name
     
     def __repr__(self):
-        s = "Type: " + self.type.upper() + "\n" 
-        #Add other parameters
-        return s
+        return "Load name: %s \nBus: %d \nP: %f \nQ: %f \n" % (self.name, self.bus, self.p, self.q)
+
+class Generator:
+   
+    def __init__(self, typ='pv', bus = 0, pset=0, min_q=0, max_q=0, vset=0, name=''):
+        self.type = typ
+        self.bus = bus
+        self.p = pset
+        self.q_min = min_q
+        self.q_max = max_q
+        self.v = vset
+        self.name = name
+    
+    def __repr__(self):
+        if self.type.lower() == 'slack':
+            return "Type: %s \nBus: %d \n" % (self.type.upper(), self.bus)
+        else:
+            return "Generator name: %s \nType: %s \nBus: %d \nP: %f \nQ limits: %f to %f \nV: %f \n" % (self.name, self.type.upper(), self.bus, self.p, self.q_min, self.q_max, self.v)

@@ -1,20 +1,72 @@
 import power_flow_newton_raphson as pf
 import numpy as np
+import pandapower as pp
+import pandapower.networks as nw
 
 
 # To be written: Tests comparing custom solver results to PandaPower results using their test cases
+
 # Will probably need to implement a function to check reactive power limits for PV busses
+
+# Will also need to add the ability for loads to be attached to PV-busses. 
+# The way to do this would probably be to handle generator loads as offsets. See the Teams discussion.
+
 ###################################################################################################
 
-""" 
-##initialization
-slack_bus_idx = 0 #slack bus placement - bus 1 is bus 0 in the code
-pv_idx = np.array([1])
-iteration_limit = 15
-tolerance = 0.001 #tolerance level for error
 
-#bus admittance matrix and system size
-ybus = np.array([[complex(0,-19.98),complex(0,10),complex(0,10)],[complex(0,10),complex(0,-19.98),complex(0,10)],[complex(0,10),complex(0,10),complex(0,-19.98)]])
+
+######MAIN IDEA FOR IMPROVEMENT FOR ORGANIZING SYSTEM DATA:#######
+
+#Using dictionaries!
+#System dictionary containing: 
+    #List of generator, load etc. dictionaries
+    #   Each of these contain parameters such as placement (bus), setpoints and limits
+    #parameters such as tolerance, max iterations
+
+###################################################################################################
+
+
+baseMVA = 100.0 #base power for system
+
+network = nw.case4gs()
+
+pp.runpp(network, enforce_q_lims=False) #run power flow
+ybus = network._ppc["internal"]["Ybus"].todense() #extract Ybus after running power flow
+gen = network.gen
+load = network.load
+
+#%% View results of PandaPower powerflow
+pf_results = network.res_bus
+pf_results['p_pu'] = pf_results.p_mw/baseMVA
+pf_results['q_pu'] = pf_results.q_mvar/baseMVA
+print(pf_results)
+
+
+#%% Custom code comparison
+##initialization
+
+system = {'admmat':ybus,'slack_idx':0,'iteration_limit':15,'tolerance':0.001,'generators':[],'loads':[]}
+
+gen_list = []
+load_list = []
+
+#Fill lists of generator and load dictionaries based on the loaded generator and load information from PandaPower
+
+
+#Rewrite functions to accept system dictionary as input
+#Consider an additional dictionary or expansion of the system dictionary to store some of the information stored as vectors in earlier code
+
+
+
+
+#%%
+
+
+
+
+#old code:
+""" 
+pv_idx = np.array([1])
 
 #power and voltage setpoints
 pset = np.array([0.6661, -2.8653]) #P setpoints for every bus except slack bus in ascending bus order
