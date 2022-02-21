@@ -15,16 +15,6 @@ import pandapower.networks as nw
 
 
 
-######MAIN IDEA FOR IMPROVEMENT FOR ORGANIZING SYSTEM DATA:#######
-
-#Using dictionaries!
-#System dictionary containing: 
-    #List of generator, load etc. dictionaries
-    #   Each of these contain parameters such as placement (bus), setpoints and limits
-    #parameters such as tolerance, max iterations
-
-###################################################################################################
-
 
 baseMVA = 100.0 #base power for system
 
@@ -52,81 +42,82 @@ load_list = []
 
 #Fill lists of generator and load dictionaries based on the loaded generator and load information from PandaPower
 
+for i in range(len(gen.index)):
+    gen_list.append({'type':'pv', 'bus':gen.bus[i], 'vset':gen.vm_pu[i], 'pset':gen.p_mw[i], 'qset':None, 'qmin':gen.min_q_mvar[i], 'qmax':gen.max_q_mvar[i], 'pmin':gen.min_p_mw[i], 'pmax':gen.max_p_mw[i]})
 
-#Rewrite functions to accept system dictionary as input
-#Consider an additional dictionary or expansion of the system dictionary to store some of the information stored as vectors in earlier code
+for i in range(len(load.index)):
+    load_list.append({'bus':load.bus[i], 'p':load.p_mw[i], 'q':load.q_mvar[i]})
 
+system.update({'generators':gen_list})
+system.update({'loads':load_list})
 
+#Consider the possibility of a load connected to the same bus as the slack generator...
+#This is the case for case4gs
+
+#%%
+
+(n_buses, g, b) = pf.process_admittance_mat(system)
+
+(vmag, delta, vmag_full, delta_full) = pf.init_voltage_vecs(system)
+
+(p, q, p_full, q_full) = pf.calc_power_vecs(system, vmag_full, delta_full, g, b)
+
+#!!!!!!!!!!!!!!!!!!!!
+#Not converging... Need to finish calc_power_vecs such that loads on generator bussed are considered!
 
 
 #%%
 
+# jacobian = pf.calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
 
+# jacobian_calc = pf.jacobian_calc_simplify(system, jacobian)
 
+# (pset, qset) = pf.calc_power_setpoints(system)
 
-#old code:
-""" 
-pv_idx = np.array([1])
+# (del_p, del_q) = calc_mismatch_vecs(system, p, q)
 
-#power and voltage setpoints
-pset = np.array([0.6661, -2.8653]) #P setpoints for every bus except slack bus in ascending bus order
-qset = np.array([-1.2244]) #Q setpoints for every bus except slack bus and PV buses in ascending bus order
-vset = np.array([1.05]) #voltage setpoints for every PV bus in ascending bus order
-vset.shape = (np.size(vset),1)
-qset.shape = (np.size(qset),1)
-pset.shape = (np.size(pset),1)
+# pv_idx = get_pv_idx(system)
+# non_pv_idx = np.arange(n_buses)
+# non_pv_idx = np.delete(non_pv_idx, pv_idx, 0)
+# iteration_limit = system.get('iteration_limit')
+# tolerance = system.get('tolerance')
 
-#setup system variables
-(jacobian, n_buses, vmag, delta, vmag_full, delta_full, g, b, p, q, del_p, del_q) = pf.initialize_system(ybus, pset, qset, pv_idx, vset)
-
-#noting indices of PQ-busses based on slack bus and PV-bus indices  
-pq_idx = np.arange(n_buses, dtype=int)
-for val in pv_idx:
-    pq_idx = pq_idx[pq_idx != val]
-pq_idx = pq_idx[(pq_idx != slack_bus_idx)]
-
-#Calculating initial power vectors
-(p, q, p_full, q_full) = pf.calculate_power_vecs(n_buses, vmag_full, delta_full, b, g, pv_idx)
-#Updating mismatch vector
-(del_p, del_q) = pf.update_mismatch_vector(p, q, pset, qset)
-
-#Calculating Jacobian matrix
-pf.calculate_jacobian(n_buses, jacobian, vmag_full, delta_full, g, b, p_full, q_full)
-
-#simplify Jacobian according to PV-busses
-jacobian_calc = pf.simplify_jacobian(n_buses, pv_idx, jacobian)
-print("J: \n", np.round(jacobian_calc, 2))
-
-
-for i in range(1, iteration_limit + 1):
-    (delta, vmag) = pf.next_iteration(jacobian_calc, vmag, delta, del_p, del_q)
-    #Calculating initial power vectors
-    delta_full[1:] = delta
-    vmag_full[2] = vmag #PLACEHOLDER - NEEDS LOGIC FOR OTHER SIZES!!!
-    (p, q, p_full, q_full) = pf.calculate_power_vecs(n_buses, vmag_full, delta_full, b, g, pv_idx)
-
-    pf.calculate_jacobian(n_buses, jacobian, vmag_full, delta_full, g, b, p_full, q_full)
-    #simplify Jacobian according to PV-busses
-    jacobian_calc = pf.simplify_jacobian(n_buses, pv_idx, jacobian)
-
-    (del_p, del_q) = pf.update_mismatch_vector(p, q, pset, qset)
-    y = np.row_stack((del_p, del_q))
-
-    print("\nIteration %d:\n" % i)
-    print("delta:\n",delta * 180/np.pi)
-    print("vmag:\n",vmag)
-    print("mismatch vector:\n", y)
-    print("Jacobian:\n", jacobian_calc)
-
-    if pf.check_convergence(y, tolerance):
-        print("Power flow converged at %d iterations.\n" % i)
-        print("delta:\n",delta * 180/np.pi)
-        print("vmag:\n",vmag)
-        print("Real power flows excluding slack:\n", p_full[1:])
-        print("Reactive power flows excluding slack:\n", q_full[1:])
-        print("mismatch vector:\n", y)
-        break
+# for i in range(1, iteration_limit + 1):
+#     (delta, vmag) = next_iteration(jacobian_calc, vmag, delta, del_p, del_q)
+#     #Calculating initial power vectors
     
-    elif i == iteration_limit:
-        print("Power flow did not converge after %d iterations.\n" % i )
- """
+#     delta_full[1:] = delta #updating voltage angles on all busses except slack
+#     vmag_full[non_pv_idx[1:]] = vmag #updating voltage magnitudes on non-slack and non-PV busses
+    
+#     (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
+
+#     jacobian = calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
+
+#     jacobian_calc = jacobian_calc_simplify(system, jacobian)
+
+#     (del_p, del_q) = calc_mismatch_vecs(system, p, q)
+    
+#     y = np.row_stack((del_p, del_q))
+
+
+#     # print("\nIteration %d:\n" % i)
+#     # print("delta:\n",delta * 180/np.pi)
+#     # print("vmag:\n",vmag)
+#     # print("mismatch vector:\n", y)
+#     # print("Jacobian:\n", jacobian_calc)
+
+#     if check_convergence(y, tolerance):
+#         print("Power flow converged at %d iterations.\n" % i)
+#         print("Phase angles (unknowns):\n",delta * 180/np.pi)
+#         print("Voltage magnitudes (unknowns):\n",vmag)
+#         print("Real power (all buses, injections):\n", p_full)
+#         print("Reactive power (all buses, injections):\n", q_full)
+#         print("Mismatch vector for known injections:\n", y)
+#         break
+    
+#     elif i == iteration_limit:
+#         print("Power flow did not converge after %d iterations.\n" % i )
+
+#%%
+
+#pf.run_newton_raphson(system)

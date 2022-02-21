@@ -33,6 +33,7 @@ pq_idx = pq_idx[(pq_idx != slack_bus_idx)]
 
 #Calculating initial power vectors
 (p, q, p_full, q_full) = pf.calculate_power_vecs(n_buses, vmag_full, delta_full, b, g, pv_idx)
+
 #Updating mismatch vector
 (del_p, del_q) = pf.update_mismatch_vector(p, q, pset, qset)
 
