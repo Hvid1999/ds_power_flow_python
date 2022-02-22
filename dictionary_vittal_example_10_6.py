@@ -9,8 +9,9 @@ import numpy as np
 #bus admittance matrix
 ybus = np.array([[complex(0,-19.98),complex(0,10),complex(0,10)],[complex(0,10),complex(0,-19.98),complex(0,10)],[complex(0,10),complex(0,10),complex(0,-19.98)]])
 
+slack_dict = {'bus':0, 'vset':1.0, 'pmin':None, 'pmax':None, 'qmin':None, 'qmax':None}
 
-system = {'admmat':ybus,'slack_idx':0,'iteration_limit':15,'tolerance':0.001,'generators':[],'loads':[]}
+system = {'admmat':ybus,'slack':slack_dict,'iteration_limit':15,'tolerance':1e-3,'generators':[],'loads':[]}
 
 #manually entering generators and loads in this example
 gen_list = [{'type':'pv', 'bus':1, 'vset':1.05, 'pset':0.6661, 'qset':None, 'qmin':None, 'qmax':None, 'pmin':None, 'pmax':None}]

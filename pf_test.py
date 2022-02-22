@@ -1,72 +1,84 @@
 import power_flow_newton_raphson as pf
-import numpy as np
 import pandapower as pp
 import pandapower.networks as nw
-
-
-# To be written: Tests comparing custom solver results to PandaPower results using their test cases
-
-# Will probably need to implement a function to check reactive power limits for PV busses
-
-# Will also need to add the ability for loads to be attached to PV-busses. 
-# The way to do this would probably be to handle generator loads as offsets. See the Teams discussion.
-
+import numpy as np
+import pandas as pd
 ###################################################################################################
 
+#Cases with slack bus on other index than 1 (0)
+#case5
+#case24_ieee_rts
+#case39
+#...
 
 
+network = nw.case39()
 
-baseMVA = 100.0 #base power for system
+#Function loading system information from PandaPower network
+#system = pf.load_pandapower_case(network)
 
-network = nw.case4gs()
+e_q_lims = True
 
-pp.runpp(network, enforce_q_lims=False) #run power flow
+baseMVA = network.sn_mva #base power for system
+
+pp.runpp(network, enforce_q_lims=e_q_lims) #run power flow
 ybus = network._ppc["internal"]["Ybus"].todense() #extract Ybus after running power flow
 gen = network.gen
 load = network.load
+slack = network.ext_grid
 
-#%% View results of PandaPower powerflow
+#Saving PandaPower results and per-unitizing power values
 pf_results = network.res_bus
 pf_results['p_pu'] = pf_results.p_mw/baseMVA
 pf_results['q_pu'] = pf_results.q_mvar/baseMVA
-print(pf_results)
+pf_results = pf_results[['vm_pu','va_degree','p_pu','q_pu']]
 
-
-#%% Custom code comparison
-##initialization
-
-system = {'admmat':ybus,'slack_idx':0,'iteration_limit':15,'tolerance':0.001,'generators':[],'loads':[]}
+slack_dict = {'bus':slack.bus[0], 'vset':slack.vm_pu[0], 'pmin':slack.min_p_mw[0]/baseMVA,
+              'pmax':slack.max_p_mw[0]/baseMVA, 'qmin':slack.min_q_mvar[0]/baseMVA, 
+              'qmax':slack.max_q_mvar[0]/baseMVA}
+##Setup system dictionary
+system = {'admmat':ybus,'slack':slack_dict,'generators':[],'loads':[],
+          'iteration_limit':15,'tolerance':1e-3}
 
 gen_list = []
 load_list = []
 
 #Fill lists of generator and load dictionaries based on the loaded generator and load information from PandaPower
+#Per-unitizing the values according to the power base
 
 for i in range(len(gen.index)):
-    gen_list.append({'type':'pv', 'bus':gen.bus[i], 'vset':gen.vm_pu[i], 'pset':gen.p_mw[i], 'qset':None, 'qmin':gen.min_q_mvar[i], 'qmax':gen.max_q_mvar[i], 'pmin':gen.min_p_mw[i], 'pmax':gen.max_p_mw[i]})
+    gen_list.append({'type':'pv', 'bus':gen.bus[i], 'vset':gen.vm_pu[i], 'pset':gen.p_mw[i]/baseMVA,
+                     'qset':None, 'qmin':gen.min_q_mvar[i]/baseMVA, 'qmax':gen.max_q_mvar[i]/baseMVA,
+                     'pmin':gen.min_p_mw[i]/baseMVA, 'pmax':gen.max_p_mw[i]/baseMVA})
 
 for i in range(len(load.index)):
-    load_list.append({'bus':load.bus[i], 'p':load.p_mw[i], 'q':load.q_mvar[i]})
+    load_list.append({'bus':load.bus[i], 'p':load.p_mw[i]/baseMVA, 'q':load.q_mvar[i]/baseMVA})
 
 system.update({'generators':gen_list})
 system.update({'loads':load_list})
 
-#Consider the possibility of a load connected to the same bus as the slack generator...
-#This is the case for case4gs
+#%%
+pf.run_newton_raphson(system, enforce_q_limits=e_q_lims)
+print('\nPandaPower results:\n')
+print(pf_results)
 
 #%%
 
-(n_buses, g, b) = pf.process_admittance_mat(system)
-
-(vmag, delta, vmag_full, delta_full) = pf.init_voltage_vecs(system)
-
-(p, q, p_full, q_full) = pf.calc_power_vecs(system, vmag_full, delta_full, g, b)
-
-#!!!!!!!!!!!!!!!!!!!!
-#Not converging... Need to finish calc_power_vecs such that loads on generator bussed are considered!
+# (n_buses, g, b) = pf.process_admittance_mat(system)
+# q_loads = np.zeros((n_buses,1))
+# for l in system.get('loads'):
+#     k = l.get('bus')
+#     q_loads[k] = -l.get('q')
 
 
 #%%
+
+# (n_buses, g, b) = pf.process_admittance_mat(system)
+
+
+# (vmag, delta, vmag_full, delta_full) = pf.init_voltage_vecs(system)
+
+# (p, q, p_full, q_full) = pf.calc_power_vecs(system, vmag_full, delta_full, g, b)
 
 # jacobian = pf.calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
 
@@ -74,28 +86,35 @@ system.update({'loads':load_list})
 
 # (pset, qset) = pf.calc_power_setpoints(system)
 
-# (del_p, del_q) = calc_mismatch_vecs(system, p, q)
+# (del_p, del_q) = pf.calc_mismatch_vecs(system, p, q)
 
-# pv_idx = get_pv_idx(system)
-# non_pv_idx = np.arange(n_buses)
-# non_pv_idx = np.delete(non_pv_idx, pv_idx, 0)
+# #obtaining list of non-PV and non-slack busses
+# pv_idx = pf.get_pv_idx(system)
+# pq_idx = np.arange(n_buses)
+# non_slack_idx = np.delete(pq_idx, pf.slack_idx(system), 0)
+# pq_idx = np.delete(pq_idx, pv_idx, 0)
+# pq_idx = pq_idx[pq_idx != pf.slack_idx(system)]
+
 # iteration_limit = system.get('iteration_limit')
 # tolerance = system.get('tolerance')
 
+
+
+#%%
 # for i in range(1, iteration_limit + 1):
-#     (delta, vmag) = next_iteration(jacobian_calc, vmag, delta, del_p, del_q)
+#     (delta, vmag) = pf.next_iteration(jacobian_calc, vmag, delta, del_p, del_q)
 #     #Calculating initial power vectors
     
-#     delta_full[1:] = delta #updating voltage angles on all busses except slack
-#     vmag_full[non_pv_idx[1:]] = vmag #updating voltage magnitudes on non-slack and non-PV busses
+#     delta_full[non_slack_idx] = delta #updating voltage angles on all busses except slack
+#     vmag_full[pq_idx] = vmag #updating voltage magnitudes on non-slack and non-PV busses
     
-#     (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
+#     (p, q, p_full, q_full) = pf.calc_power_vecs(system, vmag_full, delta_full, g, b)
 
-#     jacobian = calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
+#     jacobian = pf.calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
 
-#     jacobian_calc = jacobian_calc_simplify(system, jacobian)
+#     jacobian_calc = pf.jacobian_calc_simplify(system, jacobian)
 
-#     (del_p, del_q) = calc_mismatch_vecs(system, p, q)
+#     (del_p, del_q) = pf.calc_mismatch_vecs(system, p, q)
     
 #     y = np.row_stack((del_p, del_q))
 
@@ -106,18 +125,28 @@ system.update({'loads':load_list})
 #     # print("mismatch vector:\n", y)
 #     # print("Jacobian:\n", jacobian_calc)
 
-#     if check_convergence(y, tolerance):
-#         print("Power flow converged at %d iterations.\n" % i)
-#         print("Phase angles (unknowns):\n",delta * 180/np.pi)
-#         print("Voltage magnitudes (unknowns):\n",vmag)
-#         print("Real power (all buses, injections):\n", p_full)
-#         print("Reactive power (all buses, injections):\n", q_full)
-#         print("Mismatch vector for known injections:\n", y)
+#     if pf.check_convergence(y, tolerance):
+#         print("Power flow converged at %d iterations (tolerance of %f).\n" % (i, tolerance))
+#         print("Mismatch vector (P injections)\n", del_p)
+#         print("Mismatch vector (Q injections)\n", del_q)
+#         print("\nTable of results (power values are injections):\n")
+#         typelist = ['' for i in range(n_buses)]
+#         typelist[system.get('slack').get('bus')] = 'SLACK'
+    
+#         for gen in system.get('generators'):
+#             k = gen.get('bus')
+#             typelist[k] = gen.get('type').upper()
+        
+#         for i in range(n_buses):
+#             if typelist[i] == '':
+#                 typelist[i] = 'PQ'
+        
+#         d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
+#         df = pd.DataFrame(data=d, index = np.arange(n_buses))
+#         df.index.name = 'bus'
+#         print(df)
 #         break
     
 #     elif i == iteration_limit:
-#         print("Power flow did not converge after %d iterations.\n" % i )
+#         print("Power flow did not converge after %d iterations (tolerance of %f).\n" % (i, tolerance))
 
-#%%
-
-#pf.run_newton_raphson(system)
