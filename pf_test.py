@@ -3,6 +3,7 @@ import pandapower as pp
 import pandapower.networks as nw
 import numpy as np
 import pandas as pd
+pd.options.display.float_format = '{:.6f}'.format #avoid scientific notation
 ###################################################################################################
 
 #Cases with slack bus on other index than 1 (0)
@@ -11,13 +12,28 @@ import pandas as pd
 #case39
 #...
 
+network = nw.case4gs()
+#network = nw.case5()  #this case may be bugged...
+#network = nw.case6ww()
+#network = nw.case9()
+#network = nw.case14()
+#network = nw.case24_ieee_rts() #weird results compared to pandapower and no convergence for qlims
+#network = nw.case30()
+#network = nw.case_ieee30()
+#network = nw.case33bw()
+#network = nw.case39()
+#network = nw.case57()
+#network = nw.case300() #not the same results.. perhaps too complex and some features may be missing?
 
-network = nw.case39()
+
+#Cases source: 
+#https://pandapower.readthedocs.io/en/v2.8.0/networks/power_system_test_cases.html
+
 
 #Function loading system information from PandaPower network
 #system = pf.load_pandapower_case(network)
 
-e_q_lims = True
+e_q_lims = True #enforce q-limits True/False
 
 baseMVA = network.sn_mva #base power for system
 
@@ -26,26 +42,38 @@ ybus = network._ppc["internal"]["Ybus"].todense() #extract Ybus after running po
 gen = network.gen
 load = network.load
 slack = network.ext_grid
+buses = network.bus #bus parameters
+lines = network.line #line parameters
 
 #Saving PandaPower results and per-unitizing power values
-pf_results = network.res_bus
-pf_results['p_pu'] = pf_results.p_mw/baseMVA
-pf_results['q_pu'] = pf_results.q_mvar/baseMVA
-pf_results = pf_results[['vm_pu','va_degree','p_pu','q_pu']]
+pandapower_results = network.res_bus
+pandapower_results['p_pu'] = pandapower_results.p_mw/baseMVA
+pandapower_results['q_pu'] = pandapower_results.q_mvar/baseMVA
+pandapower_results = pandapower_results[['vm_pu','va_degree','p_pu','q_pu']]
 
+
+#loading line and transformer parameters
+pf_line_flows = network.res_line #line flows from pandapower results
+
+
+#loading slack bus information
 slack_dict = {'bus':slack.bus[0], 'vset':slack.vm_pu[0], 'pmin':slack.min_p_mw[0]/baseMVA,
               'pmax':slack.max_p_mw[0]/baseMVA, 'qmin':slack.min_q_mvar[0]/baseMVA, 
               'qmax':slack.max_q_mvar[0]/baseMVA}
-##Setup system dictionary
-system = {'admmat':ybus,'slack':slack_dict,'generators':[],'loads':[],
-          'iteration_limit':15,'tolerance':1e-3}
 
+
+#Setup system dictionary
+system = {'admmat':ybus,'slack':slack_dict, 'buses':[], 'generators':[],'loads':[],
+          'lines':[],'iteration_limit':15,'tolerance':1e-3, 's_base':baseMVA}
+
+#initializing empty lists
 gen_list = []
 load_list = []
+bus_list = []
+line_list = []
 
 #Fill lists of generator and load dictionaries based on the loaded generator and load information from PandaPower
 #Per-unitizing the values according to the power base
-
 for i in range(len(gen.index)):
     gen_list.append({'type':'pv', 'bus':gen.bus[i], 'vset':gen.vm_pu[i], 'pset':gen.p_mw[i]/baseMVA,
                      'qset':None, 'qmin':gen.min_q_mvar[i]/baseMVA, 'qmax':gen.max_q_mvar[i]/baseMVA,
@@ -53,14 +81,31 @@ for i in range(len(gen.index)):
 
 for i in range(len(load.index)):
     load_list.append({'bus':load.bus[i], 'p':load.p_mw[i]/baseMVA, 'q':load.q_mvar[i]/baseMVA})
+    
+for i in range(len(buses.index)):
+    bus_list.append({'v_max':buses.max_vm_pu[i], 'v_min':buses.min_vm_pu[i], 'v_base':buses.vn_kv[i],
+                     'zone':buses.zone[i], 'index':buses.name[i]})
+    
+for i in range(len(lines.index)):
+    line_list.append({'from':lines.from_bus[i], 'to':lines.to_bus[i], 'length':lines.length_km[i], 
+                      'ampacity':lines.max_i_ka[i], 'g_per_km':lines.g_us_per_km[i], 'c_per_km':lines.c_nf_per_km[i],
+                      'r_per_km':lines.r_ohm_per_km[i], 'x_per_km':lines.x_ohm_per_km[i], 
+                      'parallel':lines.parallel[i]})
 
 system.update({'generators':gen_list})
 system.update({'loads':load_list})
+system.update({'buses':bus_list})
+system.update({'lines':line_list})
+
 
 #%%
-pf.run_newton_raphson(system, enforce_q_limits=e_q_lims)
+pf_results = pf.run_newton_raphson(system, enforce_q_limits=e_q_lims)
 print('\nPandaPower results:\n')
-print(pf_results)
+print(pandapower_results)
+
+
+#%%
+print(pf_line_flows)
 
 #%%
 

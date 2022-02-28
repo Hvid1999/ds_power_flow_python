@@ -10,6 +10,7 @@ def load_pandapower_case(network):
     gen = network.gen
     load = network.load
     slack = network.ext_grid
+    buses = network.bus
 
     #Saving PandaPower results and per-unitizing power values
     pf_results = network.res_bus
@@ -19,16 +20,17 @@ def load_pandapower_case(network):
     slack_dict = {'bus':slack.bus[0], 'vset':slack.vm_pu[0], 'pmin':slack.min_p_mw[0]/baseMVA,
                   'pmax':slack.max_p_mw[0]/baseMVA, 'qmin':slack.min_q_mvar[0]/baseMVA, 
                   'qmax':slack.max_q_mvar[0]/baseMVA}
-    ##Setup system dictionary
-    system = {'admmat':ybus,'slack':slack_dict,'generators':[],'loads':[],
+    #Setup system dictionary
+    system = {'admmat':ybus,'slack':slack_dict, 'buses':[], 'generators':[],'loads':[],
               'iteration_limit':15,'tolerance':1e-3}
 
+    #initializing empty lists
     gen_list = []
     load_list = []
+    bus_list = []
 
     #Fill lists of generator and load dictionaries based on the loaded generator and load information from PandaPower
     #Per-unitizing the values according to the power base
-
     for i in range(len(gen.index)):
         gen_list.append({'type':'pv', 'bus':gen.bus[i], 'vset':gen.vm_pu[i], 'pset':gen.p_mw[i]/baseMVA,
                          'qset':None, 'qmin':gen.min_q_mvar[i]/baseMVA, 'qmax':gen.max_q_mvar[i]/baseMVA,
@@ -36,9 +38,15 @@ def load_pandapower_case(network):
 
     for i in range(len(load.index)):
         load_list.append({'bus':load.bus[i], 'p':load.p_mw[i]/baseMVA, 'q':load.q_mvar[i]/baseMVA})
+        
+    for i in range(len(buses.index)):
+        bus_list.append({'v_max':buses.max_vm_pu[i], 'v_min':buses.min_vm_pu[i], 'v_base':buses.vn_kv[i],
+                         'zone':buses.zone[i], 'index':buses.name[i]})
 
     system.update({'generators':gen_list})
     system.update({'loads':load_list})
+    system.update({'buses':bus_list})
+    
     return system
 
 def process_admittance_mat(system):
@@ -395,8 +403,8 @@ def run_newton_raphson(system, enforce_q_limits = False):
                         print('Recalculating power flow...\n')
                     else:
                         print("Power flow converged at %d iterations (tolerance of %f).\n" % (i, tolerance))
-                        print("Mismatch vector (P injections)\n", del_p)
-                        print("Mismatch vector (Q injections)\n", del_q)
+                        #print("Mismatch vector (P injections)\n", del_p)
+                        #print("Mismatch vector (Q injections)\n", del_q)
                         print("\nTable of results (power values are injections):\n")
                         
                         typelist = ['' for i in range(n_buses)]
@@ -418,13 +426,12 @@ def run_newton_raphson(system, enforce_q_limits = False):
                 
                 elif i == iteration_limit:
                     print("Power flow did not converge after %d iterations (tolerance of %f).\n" % (i, tolerance))
-            
+                    return None
             m += 1
             if m > 40:
                 print('\nError - endless loop. Calculation terminated.\n')
                 break
         
-        pass
     else:
         (n_buses, g, b) = process_admittance_mat(system)
     
@@ -476,8 +483,8 @@ def run_newton_raphson(system, enforce_q_limits = False):
     
             if check_convergence(y, tolerance):
                 print("Power flow converged at %d iterations (tolerance of %f).\n" % (i, tolerance))
-                print("Mismatch vector (P injections)\n", del_p)
-                print("Mismatch vector (Q injections)\n", del_q)
+                #print("Mismatch vector (P injections)\n", del_p)
+                #print("Mismatch vector (Q injections)\n", del_q)
                 print("\nTable of results (power values are injections):\n")
                 typelist = ['' for i in range(n_buses)]
                 typelist[system.get('slack').get('bus')] = 'SLACK'
@@ -494,18 +501,61 @@ def run_newton_raphson(system, enforce_q_limits = False):
                 df = pd.DataFrame(data=d, index = np.arange(n_buses))
                 df.index.name = 'bus'
                 print(df)
+                #break
                 break
             
             elif i == iteration_limit:
                 print("Power flow did not converge after %d iterations (tolerance of %f).\n" % (i, tolerance))
-    pass    
+                return None
+    
+    
+    p_loss = np.sum(p_full) #this simple line should work due to power flows being injections
+    net_currents = calc_line_flows(system, vmag_full, n_buses)
+    
+    
+    results = {'bus_results':df, 'line_flows':net_currents, 'losses':p_loss, 'mismatches':y}
+    
+    return results   
 
-def calc_line_flows():
+def calc_line_flows(system, vmag, n_buses):
     #Line flows: Current, real, reactive, apparent power at each end of lines
     #P_ft, Ptf, Q_ft, Q_tf, I_ft, I_tf, S_ft, S_tf
     #where ft = from/to and tf = to/from
-    pass 
-
-
-def calc_losses():
-    pass
+    
+    
+    #for current, try using I = Y_bus * V
+    #and for each kn-connection don't sum all buses, but include the kk-element and single kn-element
+    #correct handling of shunt elements are important
+    
+    #to go from pu current to actual current
+    #current base:  V_base^2 / Sbase
+    #the voltage base can be found by looking at network.bus for the bus(es) 
+    #to which the line is connected
+    
+    #construct a table for this... evaluate the Ybus to check for line connections
+    
+    ybus = system.get('admmat')
+    s_base = system.get('s_base')
+    
+    i_pu = np.abs(np.matmul(ybus, vmag)) 
+    
+    i_ka = i_pu
+    
+    for i in range(len(i_ka)):
+        bus = system.get('buses')[i]
+        i_base = bus.get('v_base') / s_base
+        i_ka[i] = i_ka[i] * i_base
+    
+    d = {'i_pu':i_pu.flatten(), 'i_ka':i_ka.flatten()}
+    net_currents = pd.DataFrame(data=d, index = np.arange(n_buses))
+    net_currents.index.name = 'bus'
+    
+    
+    ### Temp version - Missing line flows
+    
+    # d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
+    # df = pd.DataFrame(data=d, index = np.arange(len(system.get('lines'))))
+    # df.index.name = 'line'
+    
+    
+    return net_currents
