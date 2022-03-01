@@ -510,12 +510,70 @@ def run_newton_raphson(system, enforce_q_limits = False):
     
     
     p_loss = np.sum(p_full) #this simple line should work due to power flows being injections
-    net_currents = calc_line_flows(system, vmag_full, n_buses)
+    #net_currents = calc_line_flows(system, vmag_full, n_buses)
+    net_currents = 0
     
     
     results = {'bus_results':df, 'line_flows':net_currents, 'losses':p_loss, 'mismatches':y}
     
     return results   
+
+
+def calc_current_base(system, bus_idx):
+    #I_base = S_base / (sqrt(3) * V_base) 
+    #where S_base is 3-phase and V_base is line-to-line
+    bus = system.get('buses')[bus_idx]
+    return (system.get('s_base') * 1e6) / (1.73205080757 * bus.get('v_base') * 1e3)
+
+
+def calc_power_from_to(system, vmag, delta, from_idx, to_idx):
+    #Note - vmag and delta should be the full vectors
+    (n, g, b) = process_admittance_mat(system)
+    i = from_idx
+    j = to_idx
+    
+    p = vmag[i] ** 2 * g[i,j] - vmag[i] * vmag[j] * (
+        g[i,j] * np.cos(delta[i] - delta[j]) + b[i,j] * np.sin(delta[i] - delta[j]))
+    
+    q = - (vmag[i] ** 2) * b[i,j] - vmag[i] * vmag[j] * (
+        g[i,j] * np.sin(delta[i] - delta[j]) - b[i,j] * np.cos(delta[i] - delta[j]))
+
+    s = np.sqrt(p**2 + q**2)
+    
+    return s, p, q
+
+
+def calc_abcd_param(system, line_idx):
+    line = system.get('lines')[line_idx]
+    omega = 2*np.pi*system.get('frequency') #support for non-50Hz systems
+    l = line.get('length') #get line length in km
+    
+    z = complex(line.get('r_per_km'), line.get('x_per_km'))
+    y = complex(line.get('g_mu_s_per_km')*1e-6, omega*line.get('c_nf_per_km')*1e-9)
+    Y = y*l
+    Z = z*l
+    
+    if l <= 25: #short line 
+        a = 1
+        d = 1
+        b = Z
+        c = 0
+    elif l <= 250: #medium line - nominal parameters
+        a = 1 + (Y*Z)/2
+        d = 1 + (Y*Z)/2
+        b = Z
+        c = Y * (1 + (Y*Z)/4)
+        
+    else: #long line - exact parameters
+        gamma = np.sqrt(z*y)
+        z_c = np.sqrt(z/y)
+        a = np.cosh(gamma*l)
+        d = np.cosh(gamma*l)
+        b = z_c * np.sinh(gamma*l)
+        c = (1/z_c) * np.sinh(gamma*l)
+    
+    return a, b, c, d
+
 
 def calc_line_flows(system, vmag, n_buses):
     #Line flows: Current, real, reactive, apparent power at each end of lines
@@ -523,39 +581,31 @@ def calc_line_flows(system, vmag, n_buses):
     #where ft = from/to and tf = to/from
     
     
-    #for current, try using I = Y_bus * V
-    #and for each kn-connection don't sum all buses, but include the kk-element and single kn-element
-    #correct handling of shunt elements are important
-    
-    #to go from pu current to actual current
-    #current base:  V_base^2 / Sbase
-    #the voltage base can be found by looking at network.bus for the bus(es) 
-    #to which the line is connected
-    
-    #construct a table for this... evaluate the Ybus to check for line connections
-    
     ybus = system.get('admmat')
     s_base = system.get('s_base')
     
-    i_pu = np.abs(np.matmul(ybus, vmag)) 
     
-    i_ka = i_pu
-    
-    for i in range(len(i_ka)):
-        bus = system.get('buses')[i]
-        i_base = bus.get('v_base') / s_base
-        i_ka[i] = i_ka[i] * i_base
-    
-    d = {'i_pu':i_pu.flatten(), 'i_ka':i_ka.flatten()}
-    net_currents = pd.DataFrame(data=d, index = np.arange(n_buses))
-    net_currents.index.name = 'bus'
+    #Outlined approach:
+    # DONE 1: Use the P_ij and Q_ij equations to evaluate power flows
+    # DONE 2: Write a function to return ABCD-parameters of transmission line based on length
+    # 3: Use ABCD parameters and knowledge of power flows to calculate current flows 
+    #    (see group exercises from 31730)
+    # 4: Find base current and convert per unit current flows to kA
+    # 5: Construct dataframe for results
     
     
-    ### Temp version - Missing line flows
+    #Note: P_ij and Q_ij gives a deviation for reactive power flow - see Teams
+    
+    
+    
+    #  |S| = sqrt(3) * |V_LL| * |I_L|
+    
+    
     
     # d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
     # df = pd.DataFrame(data=d, index = np.arange(len(system.get('lines'))))
     # df.index.name = 'line'
     
+    #return df
     
-    return net_currents
+    pass 

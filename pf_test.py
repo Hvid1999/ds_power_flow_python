@@ -23,7 +23,6 @@ network = nw.case4gs()
 #network = nw.case33bw()
 #network = nw.case39()
 #network = nw.case57()
-#network = nw.case300() #not the same results.. perhaps too complex and some features may be missing?
 
 
 #Cases source: 
@@ -36,6 +35,7 @@ network = nw.case4gs()
 e_q_lims = True #enforce q-limits True/False
 
 baseMVA = network.sn_mva #base power for system
+freq = network.f_hz
 
 pp.runpp(network, enforce_q_lims=e_q_lims) #run power flow
 ybus = network._ppc["internal"]["Ybus"].todense() #extract Ybus after running power flow
@@ -44,6 +44,10 @@ load = network.load
 slack = network.ext_grid
 buses = network.bus #bus parameters
 lines = network.line #line parameters
+shunts = network.shunt #information about shunts
+
+#NOTE! if shunts are not included in the loads in PandaPower, 
+#they need to be included explicitly in the code.
 
 #Saving PandaPower results and per-unitizing power values
 pandapower_results = network.res_bus
@@ -64,7 +68,7 @@ slack_dict = {'bus':slack.bus[0], 'vset':slack.vm_pu[0], 'pmin':slack.min_p_mw[0
 
 #Setup system dictionary
 system = {'admmat':ybus,'slack':slack_dict, 'buses':[], 'generators':[],'loads':[],
-          'lines':[],'iteration_limit':15,'tolerance':1e-3, 's_base':baseMVA}
+          'lines':[],'iteration_limit':15,'tolerance':1e-3, 's_base':baseMVA, 'frequency':freq}
 
 #initializing empty lists
 gen_list = []
@@ -88,7 +92,7 @@ for i in range(len(buses.index)):
     
 for i in range(len(lines.index)):
     line_list.append({'from':lines.from_bus[i], 'to':lines.to_bus[i], 'length':lines.length_km[i], 
-                      'ampacity':lines.max_i_ka[i], 'g_per_km':lines.g_us_per_km[i], 'c_per_km':lines.c_nf_per_km[i],
+                      'ampacity':lines.max_i_ka[i], 'g_mu_s_per_km':lines.g_us_per_km[i], 'c_nf_per_km':lines.c_nf_per_km[i],
                       'r_per_km':lines.r_ohm_per_km[i], 'x_per_km':lines.x_ohm_per_km[i], 
                       'parallel':lines.parallel[i]})
 
@@ -103,6 +107,34 @@ pf_results = pf.run_newton_raphson(system, enforce_q_limits=e_q_lims)
 print('\nPandaPower results:\n')
 print(pandapower_results)
 
+#%%
+vtest = pf_results.get('bus_results')['vmag_pu']
+vtest = pd.Series.to_numpy(vtest)
+
+deltatest = pf_results.get('bus_results')['delta_deg']
+deltatest = pd.Series.to_numpy(deltatest) * np.pi / 180
+
+
+
+#test code for current calculations
+line = system.get('lines')[0]
+l = line.get('length')
+
+from_idx = line.get('from')
+to_idx = line.get('to')
+y_shunt = complex(0,2*np.pi*freq*line.get('c_nf_per_km')*1e-9) * l
+z_line = complex(line.get('r_per_km'), line.get('x_per_km')) * l
+
+(s, p, q) = pf.calc_power_from_to(system, vtest, deltatest, from_idx, to_idx)
+print('P: %f MW \nQ: %f MVAR'  % (p * baseMVA, q * baseMVA))
+
+# I_12 = (V_1 - V_2) / (Z_12) + V_1 / Y_sh / 2
+
+v_1 = complex(vtest[from_idx]*np.cos(deltatest[from_idx]), vtest[from_idx]*np.sin(deltatest[from_idx]))
+v_2 = complex(vtest[to_idx]*np.cos(deltatest[to_idx]), vtest[to_idx]*np.sin(deltatest[to_idx]))
+
+i_from_to = np.abs((v_1 - v_2) / z_line + v_1 / (y_shunt / 2))
+# Way too high value... hmmm
 
 #%%
 print(pf_line_flows)
