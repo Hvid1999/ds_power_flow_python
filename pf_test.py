@@ -93,7 +93,7 @@ for i in range(len(buses.index)):
 for i in range(len(lines.index)):
     line_list.append({'from':lines.from_bus[i], 'to':lines.to_bus[i], 'length':lines.length_km[i], 
                       'ampacity':lines.max_i_ka[i], 'g_mu_s_per_km':lines.g_us_per_km[i], 'c_nf_per_km':lines.c_nf_per_km[i],
-                      'r_per_km':lines.r_ohm_per_km[i], 'x_per_km':lines.x_ohm_per_km[i], 
+                      'r_ohm_per_km':lines.r_ohm_per_km[i], 'x_ohm_per_km':lines.x_ohm_per_km[i], 
                       'parallel':lines.parallel[i]})
 
 system.update({'generators':gen_list})
@@ -115,29 +115,9 @@ deltatest = pf_results.get('bus_results')['delta_deg']
 deltatest = pd.Series.to_numpy(deltatest) * np.pi / 180
 
 
+#test code for line flow calculations
+line_flows = pf.calc_line_flows(system, vtest, deltatest)
 
-#test code for current calculations
-line = system.get('lines')[0]
-l = line.get('length')
-
-from_idx = line.get('from')
-to_idx = line.get('to')
-y_shunt = complex(0,2*np.pi*freq*line.get('c_nf_per_km')*1e-9) * l
-z_line = complex(line.get('r_per_km'), line.get('x_per_km')) * l
-
-(s, p, q) = pf.calc_power_from_to(system, vtest, deltatest, from_idx, to_idx)
-print('P: %f MW \nQ: %f MVAR'  % (p * baseMVA, q * baseMVA))
-
-# I_12 = (V_1 - V_2) / (Z_12) + V_1 / Y_sh / 2
-
-v_1 = complex(vtest[from_idx]*np.cos(deltatest[from_idx]), vtest[from_idx]*np.sin(deltatest[from_idx]))
-v_2 = complex(vtest[to_idx]*np.cos(deltatest[to_idx]), vtest[to_idx]*np.sin(deltatest[to_idx]))
-
-i_from_to = np.abs((v_1 - v_2) / z_line + v_1 / (y_shunt / 2))
-# Way too high value... hmmm
-
-#%%
-print(pf_line_flows)
 
 #%%
 

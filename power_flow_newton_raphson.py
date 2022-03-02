@@ -339,6 +339,90 @@ def check_pv_bus(system, n_buses, q_full):
     return limit_violation
 
 
+def get_phasor(mags, args, idx):
+    return complex(mags[idx]*np.cos(args[idx]), mags[idx]*np.sin(args[idx]))
+    
+
+
+def calc_line_flows(system, vmag, delta):
+    #Line flows: Current, real, reactive, apparent power at each end of lines
+    #P_ft, Ptf, Q_ft, Q_tf, I_ft, I_tf, S_ft, S_tf
+    #where ft = from/to and tf = to/from
+    
+    
+    s_base = system.get('s_base')
+    freq = system.get('frequency')
+    
+    n_lines = np.size(system.get('lines'))
+
+    #initializing empty arrays for storing data
+    i_ft_pu = np.zeros(n_lines, dtype = complex)
+    i_tf_pu = np.zeros(n_lines, dtype = complex)
+
+    s_ft_pu = np.zeros(n_lines, dtype = complex)
+    s_tf_pu = np.zeros(n_lines, dtype = complex)
+
+    i_ka = np.zeros(n_lines)
+    loading_percent = np.zeros(n_lines)
+
+
+    for i in range(n_lines):
+        line = system.get('lines')[i]
+        l = line.get('length')
+        parallel = line.get('parallel') #number of lines in parallel
+        from_idx = line.get('from')
+        to_idx = line.get('to')
+        
+        #relevant base values for per unit calculations
+        v_base = system.get('buses')[from_idx].get('v_base')
+        z_base = (v_base ** 2)  / (s_base) #voltage in kV and power in MVA
+        # I_base = S_base_3ph / sqrt(3) * V_base_LL
+        i_base_ka = s_base * 1e3 / (np.sqrt(3) * v_base * 1e3) #base current in kA (power base multiplied by 1e3 instead of 1e6)
+        
+        
+        y_shunt = complex(line.get('g_mu_s_per_km') * 1e-6, 
+                          2 * np.pi * freq * line.get('c_nf_per_km')*1e-9) * l * parallel
+        y_shunt_pu =  y_shunt * z_base # Y = 1/Z, so Y_pu = 1/Z_pu = Y * Z_base
+        
+        z_line = complex(line.get('r_ohm_per_km'), line.get('x_ohm_per_km')) * l / parallel
+        z_line_pu = z_line / z_base
+        
+        #loading voltage magnitude and phase angle as phasor
+        v_1 = get_phasor(vmag, delta, from_idx)
+        v_2 = get_phasor(vmag, delta, to_idx)
+        
+        # I_12 = (V_1 - V_2) / (Z_12) + V_1 / Y_sh / 2
+        
+        i_ft_pu[i] = ((v_1 - v_2) / z_line_pu + v_1 * (y_shunt_pu / 2))
+        i_tf_pu[i] = ((v_2 - v_1) / z_line_pu + v_2 * (y_shunt_pu / 2))
+        
+        s_ft_pu[i] = v_1 * np.conj(i_ft_pu[i])
+        s_tf_pu[i] = v_2 * np.conj(i_tf_pu[i])
+        
+        i_ka[i] = max(np.abs(i_ft_pu[i]), np.abs(i_tf_pu[i])) * i_base_ka
+        
+        loading_percent[i] = (i_ka[i] / line.get('ampacity')) * 100
+        
+        
+    p_ft_pu = np.real(s_ft_pu)
+    p_tf_pu = np.real(s_tf_pu)
+
+    q_ft_pu = np.imag(s_ft_pu)
+    q_tf_pu = np.imag(s_tf_pu)
+
+    p_loss = p_ft_pu + p_tf_pu
+    q_loss = q_ft_pu + q_tf_pu
+        
+    d = {'loading_percent':loading_percent, 'i_ka':i_ka, 'p_ft_pu':p_ft_pu, 'p_tf_pu':p_tf_pu, 
+         'p_loss_pu':p_loss, 'q_ft_pu':q_ft_pu, 'q_tf_pu':q_tf_pu, 'q_loss_pu':q_loss, 
+         'i_ft_pu':np.abs(i_ft_pu), 'i_tf_pu':np.abs(i_tf_pu), 's_ft_pu':np.abs(s_ft_pu), 
+         's_tf_pu':np.abs(s_tf_pu)}
+    df = pd.DataFrame(data=d, index = np.arange(n_lines))
+    df.index.name = 'line'
+    
+    return df
+
+
 def run_newton_raphson(system, enforce_q_limits = False):
     
     if enforce_q_limits == True:
@@ -519,93 +603,56 @@ def run_newton_raphson(system, enforce_q_limits = False):
     return results   
 
 
-def calc_current_base(system, bus_idx):
-    #I_base = S_base / (sqrt(3) * V_base) 
-    #where S_base is 3-phase and V_base is line-to-line
-    bus = system.get('buses')[bus_idx]
-    return (system.get('s_base') * 1e6) / (1.73205080757 * bus.get('v_base') * 1e3)
 
 
-def calc_power_from_to(system, vmag, delta, from_idx, to_idx):
-    #Note - vmag and delta should be the full vectors
-    (n, g, b) = process_admittance_mat(system)
-    i = from_idx
-    j = to_idx
+#=============================================================================
+# def calc_power_from_to(system, vmag, delta, from_idx, to_idx):
+#     #Note - vmag and delta should be the full vectors
+#     (n, g, b) = process_admittance_mat(system)
+#     i = from_idx
+#     j = to_idx
     
-    p = vmag[i] ** 2 * g[i,j] - vmag[i] * vmag[j] * (
-        g[i,j] * np.cos(delta[i] - delta[j]) + b[i,j] * np.sin(delta[i] - delta[j]))
+#     p = vmag[i] ** 2 * g[i,j] - vmag[i] * vmag[j] * (
+#         g[i,j] * np.cos(delta[i] - delta[j]) + b[i,j] * np.sin(delta[i] - delta[j]))
     
-    q = - (vmag[i] ** 2) * b[i,j] - vmag[i] * vmag[j] * (
-        g[i,j] * np.sin(delta[i] - delta[j]) - b[i,j] * np.cos(delta[i] - delta[j]))
+#     q = - (vmag[i] ** 2) * b[i,j] - vmag[i] * vmag[j] * (
+#         g[i,j] * np.sin(delta[i] - delta[j]) - b[i,j] * np.cos(delta[i] - delta[j]))
 
-    s = np.sqrt(p**2 + q**2)
+#     s = complex(p,q)
     
-    return s, p, q
+#     return s, p, q
 
 
-def calc_abcd_param(system, line_idx):
-    line = system.get('lines')[line_idx]
-    omega = 2*np.pi*system.get('frequency') #support for non-50Hz systems
-    l = line.get('length') #get line length in km
+# def calc_abcd_param(system, line_idx):
+#     line = system.get('lines')[line_idx]
+#     omega = 2*np.pi*system.get('frequency') #support for non-50Hz systems
+#     l = line.get('length') #get line length in km
     
-    z = complex(line.get('r_per_km'), line.get('x_per_km'))
-    y = complex(line.get('g_mu_s_per_km')*1e-6, omega*line.get('c_nf_per_km')*1e-9)
-    Y = y*l
-    Z = z*l
+#     z = complex(line.get('r_ohm_per_km'), line.get('x_ohm_per_km'))
+#     y = complex(line.get('g_mu_s_per_km')*1e-6, omega*line.get('c_nf_per_km')*1e-9)
+#     Y = y*l
+#     Z = z*l
     
-    if l <= 25: #short line 
-        a = 1
-        d = 1
-        b = Z
-        c = 0
-    elif l <= 250: #medium line - nominal parameters
-        a = 1 + (Y*Z)/2
-        d = 1 + (Y*Z)/2
-        b = Z
-        c = Y * (1 + (Y*Z)/4)
+#     if l <= 25: #short line 
+#         a = 1
+#         d = 1
+#         b = Z
+#         c = 0
+#     elif l <= 250: #medium line - nominal parameters
+#         a = 1 + (Y*Z)/2
+#         d = 1 + (Y*Z)/2
+#         b = Z
+#         c = Y * (1 + (Y*Z)/4)
         
-    else: #long line - exact parameters
-        gamma = np.sqrt(z*y)
-        z_c = np.sqrt(z/y)
-        a = np.cosh(gamma*l)
-        d = np.cosh(gamma*l)
-        b = z_c * np.sinh(gamma*l)
-        c = (1/z_c) * np.sinh(gamma*l)
+#     else: #long line - exact parameters
+#         gamma = np.sqrt(z*y)
+#         z_c = np.sqrt(z/y)
+#         a = np.cosh(gamma*l)
+#         d = np.cosh(gamma*l)
+#         b = z_c * np.sinh(gamma*l)
+#         c = (1/z_c) * np.sinh(gamma*l)
     
-    return a, b, c, d
+#     return a, b, c, d
 
 
-def calc_line_flows(system, vmag, n_buses):
-    #Line flows: Current, real, reactive, apparent power at each end of lines
-    #P_ft, Ptf, Q_ft, Q_tf, I_ft, I_tf, S_ft, S_tf
-    #where ft = from/to and tf = to/from
-    
-    
-    ybus = system.get('admmat')
-    s_base = system.get('s_base')
-    
-    
-    #Outlined approach:
-    # DONE 1: Use the P_ij and Q_ij equations to evaluate power flows
-    # DONE 2: Write a function to return ABCD-parameters of transmission line based on length
-    # 3: Use ABCD parameters and knowledge of power flows to calculate current flows 
-    #    (see group exercises from 31730)
-    # 4: Find base current and convert per unit current flows to kA
-    # 5: Construct dataframe for results
-    
-    
-    #Note: P_ij and Q_ij gives a deviation for reactive power flow - see Teams
-    
-    
-    
-    #  |S| = sqrt(3) * |V_LL| * |I_L|
-    
-    
-    
-    # d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
-    # df = pd.DataFrame(data=d, index = np.arange(len(system.get('lines'))))
-    # df.index.name = 'line'
-    
-    #return df
-    
-    pass 
+
