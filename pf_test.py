@@ -10,27 +10,26 @@ pd.options.display.float_format = '{:.6f}'.format #avoid scientific notation
 #case5
 #case24_ieee_rts
 #case39
-#...
 
-network = nw.case4gs()
-#network = nw.case5()  #this case may be bugged...
+#network = nw.case4gs()
+#network = nw.case5()
 #network = nw.case6ww()
 #network = nw.case9()
 #network = nw.case14()
-#network = nw.case24_ieee_rts() #weird results compared to pandapower and no convergence for qlims
+#network = nw.case24_ieee_rts()
 #network = nw.case30()
-#network = nw.case_ieee30()
+network = nw.case_ieee30()
 #network = nw.case33bw()
 #network = nw.case39()
 #network = nw.case57()
-
 
 #Cases source: 
 #https://pandapower.readthedocs.io/en/v2.8.0/networks/power_system_test_cases.html
 
 
 #Function loading system information from PandaPower network
-#system = pf.load_pandapower_case(network)
+#Will contain most of the code below
+#system = pf.load_pandapower_case(network, e_q_lims = True)
 
 e_q_lims = True #enforce q-limits True/False
 
@@ -39,7 +38,8 @@ freq = network.f_hz
 
 pp.runpp(network, enforce_q_lims=e_q_lims) #run power flow
 ybus = network._ppc["internal"]["Ybus"].todense() #extract Ybus after running power flow
-gen = network.gen
+gen = network.gen #voltage controlled generators
+sgen = network.sgen #static generators (PQ)
 load = network.load
 slack = network.ext_grid
 buses = network.bus #bus parameters
@@ -67,7 +67,7 @@ slack_dict = {'bus':slack.bus[0], 'vset':slack.vm_pu[0], 'pmin':slack.min_p_mw[0
 
 
 #Setup system dictionary
-system = {'admmat':ybus,'slack':slack_dict, 'buses':[], 'generators':[],'loads':[],
+system = {'admmat':ybus,'slack':slack_dict, 'buses':[], 'generators':[],'loads':[], 'shunts':[],
           'lines':[],'iteration_limit':15,'tolerance':1e-3, 's_base':baseMVA, 'frequency':freq}
 
 #initializing empty lists
@@ -75,16 +75,32 @@ gen_list = []
 load_list = []
 bus_list = []
 line_list = []
+shunt_list = []
 
 #Fill lists of generator and load dictionaries based on the loaded generator and load information from PandaPower
 #Per-unitizing the values according to the power base
+
+#Voltage controlled generators
 for i in range(len(gen.index)):
     gen_list.append({'type':'pv', 'bus':gen.bus[i], 'vset':gen.vm_pu[i], 'pset':gen.p_mw[i]/baseMVA,
                      'qset':None, 'qmin':gen.min_q_mvar[i]/baseMVA, 'qmax':gen.max_q_mvar[i]/baseMVA,
-                     'pmin':gen.min_p_mw[i]/baseMVA, 'pmax':gen.max_p_mw[i]/baseMVA})
+                     'pmin':gen.min_p_mw[i]/baseMVA, 'pmax':gen.max_p_mw[i]/baseMVA, 
+                     'in_service':gen.in_service[i]})
+
+#Static generators
+for i in range(len(sgen.index)):
+    gen_list.append({'type':'pq', 'bus':sgen.bus[i], 'vset':None, 'pset':sgen.p_mw[i]/baseMVA,
+                     'qset':sgen.q_mvar[i]/baseMVA, 'qmin':sgen.min_q_mvar[i]/baseMVA,
+                     'qmax':sgen.max_q_mvar[i]/baseMVA, 'pmin':sgen.min_p_mw[i]/baseMVA, 
+                     'pmax':sgen.max_p_mw[i]/baseMVA, 'in_service':sgen.in_service[i]})
+
+#sort list of generator dictionaries by bus placement after loading both PV and PQ generators
+gen_list = sorted(gen_list, key=lambda d: d['bus'])
+
 
 for i in range(len(load.index)):
-    load_list.append({'bus':load.bus[i], 'p':load.p_mw[i]/baseMVA, 'q':load.q_mvar[i]/baseMVA})
+    load_list.append({'bus':load.bus[i], 'p':load.p_mw[i]/baseMVA, 'q':load.q_mvar[i]/baseMVA, 
+                      'in_service':load.in_service[i]})
     
 for i in range(len(buses.index)):
     bus_list.append({'v_max':buses.max_vm_pu[i], 'v_min':buses.min_vm_pu[i], 'v_base':buses.vn_kv[i],
@@ -94,116 +110,30 @@ for i in range(len(lines.index)):
     line_list.append({'from':lines.from_bus[i], 'to':lines.to_bus[i], 'length':lines.length_km[i], 
                       'ampacity':lines.max_i_ka[i], 'g_mu_s_per_km':lines.g_us_per_km[i], 'c_nf_per_km':lines.c_nf_per_km[i],
                       'r_ohm_per_km':lines.r_ohm_per_km[i], 'x_ohm_per_km':lines.x_ohm_per_km[i], 
-                      'parallel':lines.parallel[i]})
+                      'parallel':lines.parallel[i], 'in_service':lines.in_service[i]})
+    
+for i in range(len(shunts.index)):
+    #Note: The PandaPower shunt power values are CONSUMPTION (load convention)
+    shunt_list.append({'bus':shunts.bus[i], 'q_pu':shunts.q_mvar[i]/baseMVA,
+                       'p_pu':shunts.p_mw[i]/baseMVA, 'v_rated':shunts.vn_kv[i], 
+                       'in_service':shunts.in_service[i]})
+
+#Shunts are basically handled as loads in this code.
+#PandaPower implements shunts in a different way - they essentially do not 
+#affect bus voltages, but instead their power consumption is calculated 
+#and added to the bus power consumption
+#more on this: https://pandapower.readthedocs.io/en/v2.8.0/elements/shunt.html 
 
 system.update({'generators':gen_list})
 system.update({'loads':load_list})
+system.update({'shunts':shunt_list})
 system.update({'buses':bus_list})
 system.update({'lines':line_list})
 
 
 #%%
-pf_results = pf.run_newton_raphson(system, enforce_q_limits=e_q_lims)
+results = pf.run_newton_raphson(system, enforce_q_limits=e_q_lims)
 print('\nPandaPower results:\n')
 print(pandapower_results)
 
-#%%
-vtest = pf_results.get('bus_results')['vmag_pu']
-vtest = pd.Series.to_numpy(vtest)
-
-deltatest = pf_results.get('bus_results')['delta_deg']
-deltatest = pd.Series.to_numpy(deltatest) * np.pi / 180
-
-
-#test code for line flow calculations
-line_flows = pf.calc_line_flows(system, vtest, deltatest)
-
-
-#%%
-
-# (n_buses, g, b) = pf.process_admittance_mat(system)
-# q_loads = np.zeros((n_buses,1))
-# for l in system.get('loads'):
-#     k = l.get('bus')
-#     q_loads[k] = -l.get('q')
-
-
-#%%
-
-# (n_buses, g, b) = pf.process_admittance_mat(system)
-
-
-# (vmag, delta, vmag_full, delta_full) = pf.init_voltage_vecs(system)
-
-# (p, q, p_full, q_full) = pf.calc_power_vecs(system, vmag_full, delta_full, g, b)
-
-# jacobian = pf.calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
-
-# jacobian_calc = pf.jacobian_calc_simplify(system, jacobian)
-
-# (pset, qset) = pf.calc_power_setpoints(system)
-
-# (del_p, del_q) = pf.calc_mismatch_vecs(system, p, q)
-
-# #obtaining list of non-PV and non-slack busses
-# pv_idx = pf.get_pv_idx(system)
-# pq_idx = np.arange(n_buses)
-# non_slack_idx = np.delete(pq_idx, pf.slack_idx(system), 0)
-# pq_idx = np.delete(pq_idx, pv_idx, 0)
-# pq_idx = pq_idx[pq_idx != pf.slack_idx(system)]
-
-# iteration_limit = system.get('iteration_limit')
-# tolerance = system.get('tolerance')
-
-
-
-#%%
-# for i in range(1, iteration_limit + 1):
-#     (delta, vmag) = pf.next_iteration(jacobian_calc, vmag, delta, del_p, del_q)
-#     #Calculating initial power vectors
-    
-#     delta_full[non_slack_idx] = delta #updating voltage angles on all busses except slack
-#     vmag_full[pq_idx] = vmag #updating voltage magnitudes on non-slack and non-PV busses
-    
-#     (p, q, p_full, q_full) = pf.calc_power_vecs(system, vmag_full, delta_full, g, b)
-
-#     jacobian = pf.calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
-
-#     jacobian_calc = pf.jacobian_calc_simplify(system, jacobian)
-
-#     (del_p, del_q) = pf.calc_mismatch_vecs(system, p, q)
-    
-#     y = np.row_stack((del_p, del_q))
-
-
-#     # print("\nIteration %d:\n" % i)
-#     # print("delta:\n",delta * 180/np.pi)
-#     # print("vmag:\n",vmag)
-#     # print("mismatch vector:\n", y)
-#     # print("Jacobian:\n", jacobian_calc)
-
-#     if pf.check_convergence(y, tolerance):
-#         print("Power flow converged at %d iterations (tolerance of %f).\n" % (i, tolerance))
-#         print("Mismatch vector (P injections)\n", del_p)
-#         print("Mismatch vector (Q injections)\n", del_q)
-#         print("\nTable of results (power values are injections):\n")
-#         typelist = ['' for i in range(n_buses)]
-#         typelist[system.get('slack').get('bus')] = 'SLACK'
-    
-#         for gen in system.get('generators'):
-#             k = gen.get('bus')
-#             typelist[k] = gen.get('type').upper()
-        
-#         for i in range(n_buses):
-#             if typelist[i] == '':
-#                 typelist[i] = 'PQ'
-        
-#         d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
-#         df = pd.DataFrame(data=d, index = np.arange(n_buses))
-#         df.index.name = 'bus'
-#         print(df)
-#         break
-    
-#     elif i == iteration_limit:
-#         print("Power flow did not converge after %d iterations (tolerance of %f).\n" % (i, tolerance))
 

@@ -2,50 +2,93 @@ import numpy as np
 import pandas as pd
 import pandapower as pp
 
-def load_pandapower_case(network):
+def load_pandapower_case(network, e_q_lims=False):
     baseMVA = network.sn_mva #base power for system
+    freq = network.f_hz
 
-    pp.runpp(network, enforce_q_lims=True) #run power flow
+    pp.runpp(network, enforce_q_lims=e_q_lims) #run power flow
     ybus = network._ppc["internal"]["Ybus"].todense() #extract Ybus after running power flow
-    gen = network.gen
+    gen = network.gen #voltage controlled generators
+    sgen = network.sgen #static generators (PQ)
     load = network.load
     slack = network.ext_grid
-    buses = network.bus
+    buses = network.bus #bus parameters
+    lines = network.line #line parameters
+    shunts = network.shunt #information about shunts
+
+    #NOTE! if shunts are not included in the loads in PandaPower, 
+    #they need to be included explicitly in the code.
 
     #Saving PandaPower results and per-unitizing power values
-    pf_results = network.res_bus
-    pf_results['p_pu'] = pf_results.p_mw/baseMVA
-    pf_results['q_pu'] = pf_results.q_mvar/baseMVA
-    
+    pandapower_results = network.res_bus
+    pandapower_results['p_pu'] = pandapower_results.p_mw/baseMVA
+    pandapower_results['q_pu'] = pandapower_results.q_mvar/baseMVA
+    pandapower_results = pandapower_results[['vm_pu','va_degree','p_pu','q_pu']]
+
+
+    #loading slack bus information
     slack_dict = {'bus':slack.bus[0], 'vset':slack.vm_pu[0], 'pmin':slack.min_p_mw[0]/baseMVA,
                   'pmax':slack.max_p_mw[0]/baseMVA, 'qmin':slack.min_q_mvar[0]/baseMVA, 
                   'qmax':slack.max_q_mvar[0]/baseMVA}
+
+
     #Setup system dictionary
-    system = {'admmat':ybus,'slack':slack_dict, 'buses':[], 'generators':[],'loads':[],
-              'iteration_limit':15,'tolerance':1e-3}
+    system = {'admmat':ybus,'slack':slack_dict, 'buses':[], 'generators':[],'loads':[], 'shunts':[],
+              'lines':[],'iteration_limit':15,'tolerance':1e-3, 's_base':baseMVA, 'frequency':freq}
 
     #initializing empty lists
     gen_list = []
     load_list = []
     bus_list = []
+    line_list = []
+    shunt_list = []
 
     #Fill lists of generator and load dictionaries based on the loaded generator and load information from PandaPower
     #Per-unitizing the values according to the power base
+
+    #Voltage controlled generators
     for i in range(len(gen.index)):
         gen_list.append({'type':'pv', 'bus':gen.bus[i], 'vset':gen.vm_pu[i], 'pset':gen.p_mw[i]/baseMVA,
                          'qset':None, 'qmin':gen.min_q_mvar[i]/baseMVA, 'qmax':gen.max_q_mvar[i]/baseMVA,
-                         'pmin':gen.min_p_mw[i]/baseMVA, 'pmax':gen.max_p_mw[i]/baseMVA})
+                         'pmin':gen.min_p_mw[i]/baseMVA, 'pmax':gen.max_p_mw[i]/baseMVA, 
+                         'in_service':gen.in_service[i]})
+
+    #Static generators
+    for i in range(len(sgen.index)):
+        gen_list.append({'type':'pq', 'bus':sgen.bus[i], 'vset':None, 'pset':sgen.p_mw[i]/baseMVA,
+                         'qset':sgen.q_mvar[i]/baseMVA, 'qmin':sgen.min_q_mvar[i]/baseMVA,
+                         'qmax':sgen.max_q_mvar[i]/baseMVA, 'pmin':sgen.min_p_mw[i]/baseMVA, 
+                         'pmax':sgen.max_p_mw[i]/baseMVA, 'in_service':sgen.in_service[i]})
+
+    #sort list of generator dictionaries by bus placement after loading both PV and PQ generators
+    gen_list = sorted(gen_list, key=lambda d: d['bus'])
+
 
     for i in range(len(load.index)):
-        load_list.append({'bus':load.bus[i], 'p':load.p_mw[i]/baseMVA, 'q':load.q_mvar[i]/baseMVA})
+        load_list.append({'bus':load.bus[i], 'p':load.p_mw[i]/baseMVA, 'q':load.q_mvar[i]/baseMVA, 
+                          'in_service':load.in_service[i]})
         
     for i in range(len(buses.index)):
         bus_list.append({'v_max':buses.max_vm_pu[i], 'v_min':buses.min_vm_pu[i], 'v_base':buses.vn_kv[i],
                          'zone':buses.zone[i], 'index':buses.name[i]})
+        
+    for i in range(len(lines.index)):
+        line_list.append({'from':lines.from_bus[i], 'to':lines.to_bus[i], 'length':lines.length_km[i], 
+                          'ampacity':lines.max_i_ka[i], 'g_mu_s_per_km':lines.g_us_per_km[i], 'c_nf_per_km':lines.c_nf_per_km[i],
+                          'r_ohm_per_km':lines.r_ohm_per_km[i], 'x_ohm_per_km':lines.x_ohm_per_km[i], 
+                          'parallel':lines.parallel[i], 'in_service':lines.in_service[i]})
+        
+    for i in range(len(shunts.index)):
+        #Note: The PandaPower shunt power values are CONSUMPTION (load convention)
+        shunt_list.append({'bus':shunts.bus[i], 'q_pu':shunts.q_mvar[i]/baseMVA,
+                           'p_pu':shunts.p_mw[i]/baseMVA, 'v_rated':shunts.vn_kv[i], 
+                           'in_service':shunts.in_service[i]})
 
     system.update({'generators':gen_list})
     system.update({'loads':load_list})
+    system.update({'shunts':shunt_list})
     system.update({'buses':bus_list})
+    system.update({'lines':line_list})
     
     return system
 
@@ -145,11 +188,20 @@ def calc_power_setpoints(system):
     
     gens = system.get('generators')
     loads = system.get('loads')
+    shunts = system.get('shunts')
     
     for load in loads:
         k = load.get('bus')
         pset[k] -= load.get('p') #load is a negative injection
         qset[k] -= load.get('q')
+    
+    #Shunts are as of now handled as loads 
+    #this allows them to affect bus voltages - contrary to PandaPower shunts
+    for shunt in shunts:
+        k = shunt.get('bus')
+        pset[k] -= shunt.get('p_pu') #shunt values are consumption (load convention)
+        qset[k] -= shunt.get('q_pu')
+        
     for gen in gens:
         k = gen.get('bus')
         pset[k] += gen.get('pset') #generator is a positive injection
@@ -176,55 +228,6 @@ def calc_mismatch_vecs(system, p, q):
     return del_p, del_q
 
 
-####################################################
-#old version of Jacobian calculation without support for arbitrary slack bus index
-
-# def calc_jacobian(system, vmag, delta, g, b, p, q):
-#     ybus = system.get('admmat')
-#     n_buses = ybus.shape[0]
-    
-#     jacobian = np.zeros((2*(n_buses-1),2*(n_buses-1)))
-    
-#     #Pointing to the submatrices
-#     j1 = jacobian[0:(n_buses-1),0:(n_buses-1)]
-#     j2 = jacobian[0:(n_buses-1),(n_buses-1):(2*(n_buses-1))]
-#     j3 = jacobian[(n_buses-1):(2*(n_buses-1)),0:(n_buses-1)]
-#     j4 = jacobian[(n_buses-1):(2*(n_buses-1)),(n_buses-1):(2*(n_buses-1))]
-
-#     #Calculating Jacobian matrix
-#     for k in range(1,n_buses):
-#         for n in range(1, n_buses):
-#             if k == n: #diagonal elements
-#                 j1[k-1,n-1] = -q[k] - b[k,k] * vmag[k]**2
-#                 j2[k-1,n-1] = p[k] / vmag[k] + g[k,k] * vmag[k]
-#                 j3[k-1,n-1] = p[k] - g[k,k] * vmag[k]**2
-#                 j4[k-1,n-1] = q[k] / vmag[k] - b[k,k] * vmag[k]
-
-#             else: #off-diagonal elements
-#                 j1[k-1,n-1] = vmag[k] * vmag[n] * (g[k,n]*(np.sin(delta[k] - delta[n])) - b[k,n]*np.cos(delta[k] - delta[n]))
-#                 j2[k-1,n-1] = vmag[k] * (g[k,n]*(np.cos(delta[k] - delta[n])) + b[k,n]*np.sin(delta[k] - delta[n]))
-#                 j3[k-1,n-1] = -vmag[k] * vmag[n] * (g[k,n]*(np.cos(delta[k] - delta[n])) + b[k,n]*np.sin(delta[k] - delta[n]))
-#                 j4[k-1,n-1] = vmag[k] * (g[k,n]*(np.sin(delta[k] - delta[n])) - b[k,n]*np.cos(delta[k] - delta[n]))
-
-#     return jacobian
-
-
-# def jacobian_calc_simplify(system, jacobian):
-#     ybus = system.get('admmat')
-#     n_buses = ybus.shape[0]
-    
-#     pv_idx = get_pv_idx(system) #reading indices of PV-busses
-    
-#     #simplifies jacobian matrix in the presence of PV-busses by deleting rows and columns
-#     if np.size(pv_idx) != 0:
-#         jacobian_calc = np.delete(jacobian, pv_idx + n_buses - 2, 0) #n - 2 because bus 1 is index 0 in the jacobian matrix
-#         jacobian_calc = np.delete(jacobian_calc, pv_idx + n_buses - 2, 1) #and the submatrices are (n-1) * (n-1)
-#     else:
-#         jacobian_calc = jacobian
-#     return jacobian_calc
-
-
-#####################################################
 
 def calc_jacobian(system, vmag_full, delta_full, g_full, b_full, p_full, q_full):
     ybus = system.get('admmat')
@@ -594,11 +597,20 @@ def run_newton_raphson(system, enforce_q_limits = False):
     
     
     p_loss = np.sum(p_full) #this simple line should work due to power flows being injections
-    #net_currents = calc_line_flows(system, vmag_full, n_buses)
-    net_currents = 0
+    
+    vmag_res = df['vmag_pu']
+    vmag_res = pd.Series.to_numpy(vmag_res)
+
+    delta_res = df['delta_deg']
+    delta_res = pd.Series.to_numpy(delta_res) * np.pi / 180
+
+
+    #test code for line flow calculations
+    line_flows = calc_line_flows(system, vmag_res, delta_res)
     
     
-    results = {'bus_results':df, 'line_flows':net_currents, 'losses':p_loss, 'mismatches':y}
+    results = {'bus_results':df, 'line_flows':line_flows, 'total_losses_mw':p_loss*system.get('s_base'), 
+               'mismatches':y}
     
     return results   
 
@@ -654,5 +666,53 @@ def run_newton_raphson(system, enforce_q_limits = False):
     
 #     return a, b, c, d
 
+####################################################
+#old version of Jacobian calculation without support for arbitrary slack bus index
 
+# def calc_jacobian(system, vmag, delta, g, b, p, q):
+#     ybus = system.get('admmat')
+#     n_buses = ybus.shape[0]
+    
+#     jacobian = np.zeros((2*(n_buses-1),2*(n_buses-1)))
+    
+#     #Pointing to the submatrices
+#     j1 = jacobian[0:(n_buses-1),0:(n_buses-1)]
+#     j2 = jacobian[0:(n_buses-1),(n_buses-1):(2*(n_buses-1))]
+#     j3 = jacobian[(n_buses-1):(2*(n_buses-1)),0:(n_buses-1)]
+#     j4 = jacobian[(n_buses-1):(2*(n_buses-1)),(n_buses-1):(2*(n_buses-1))]
+
+#     #Calculating Jacobian matrix
+#     for k in range(1,n_buses):
+#         for n in range(1, n_buses):
+#             if k == n: #diagonal elements
+#                 j1[k-1,n-1] = -q[k] - b[k,k] * vmag[k]**2
+#                 j2[k-1,n-1] = p[k] / vmag[k] + g[k,k] * vmag[k]
+#                 j3[k-1,n-1] = p[k] - g[k,k] * vmag[k]**2
+#                 j4[k-1,n-1] = q[k] / vmag[k] - b[k,k] * vmag[k]
+
+#             else: #off-diagonal elements
+#                 j1[k-1,n-1] = vmag[k] * vmag[n] * (g[k,n]*(np.sin(delta[k] - delta[n])) - b[k,n]*np.cos(delta[k] - delta[n]))
+#                 j2[k-1,n-1] = vmag[k] * (g[k,n]*(np.cos(delta[k] - delta[n])) + b[k,n]*np.sin(delta[k] - delta[n]))
+#                 j3[k-1,n-1] = -vmag[k] * vmag[n] * (g[k,n]*(np.cos(delta[k] - delta[n])) + b[k,n]*np.sin(delta[k] - delta[n]))
+#                 j4[k-1,n-1] = vmag[k] * (g[k,n]*(np.sin(delta[k] - delta[n])) - b[k,n]*np.cos(delta[k] - delta[n]))
+
+#     return jacobian
+
+
+# def jacobian_calc_simplify(system, jacobian):
+#     ybus = system.get('admmat')
+#     n_buses = ybus.shape[0]
+    
+#     pv_idx = get_pv_idx(system) #reading indices of PV-busses
+    
+#     #simplifies jacobian matrix in the presence of PV-busses by deleting rows and columns
+#     if np.size(pv_idx) != 0:
+#         jacobian_calc = np.delete(jacobian, pv_idx + n_buses - 2, 0) #n - 2 because bus 1 is index 0 in the jacobian matrix
+#         jacobian_calc = np.delete(jacobian_calc, pv_idx + n_buses - 2, 1) #and the submatrices are (n-1) * (n-1)
+#     else:
+#         jacobian_calc = jacobian
+#     return jacobian_calc
+
+
+#####################################################
 
