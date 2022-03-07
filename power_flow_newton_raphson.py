@@ -2,11 +2,11 @@ import numpy as np
 import pandas as pd
 import pandapower as pp
 
-def load_pandapower_case(network, e_q_lims=False):
+def load_pandapower_case(network, enforce_q_limits=False):
     baseMVA = network.sn_mva #base power for system
     freq = network.f_hz
 
-    pp.runpp(network, enforce_q_lims=e_q_lims) #run power flow
+    pp.runpp(network, enforce_q_lims=enforce_q_limits) #run power flow
     ybus = network._ppc["internal"]["Ybus"].todense() #extract Ybus after running power flow
     gen = network.gen #voltage controlled generators
     sgen = network.sgen #static generators (PQ)
@@ -24,7 +24,6 @@ def load_pandapower_case(network, e_q_lims=False):
     pandapower_results['p_pu'] = pandapower_results.p_mw/baseMVA
     pandapower_results['q_pu'] = pandapower_results.q_mvar/baseMVA
     pandapower_results = pandapower_results[['vm_pu','va_degree','p_pu','q_pu']]
-
 
     #loading slack bus information
     slack_dict = {'bus':slack.bus[0], 'vset':slack.vm_pu[0], 'pmin':slack.min_p_mw[0]/baseMVA,
@@ -84,13 +83,19 @@ def load_pandapower_case(network, e_q_lims=False):
                            'p_pu':shunts.p_mw[i]/baseMVA, 'v_rated':shunts.vn_kv[i], 
                            'in_service':shunts.in_service[i]})
 
+    #Shunts are basically handled as loads in this code.
+    #PandaPower implements shunts in a different way - they essentially do not 
+    #affect bus voltages, but instead their power consumption is calculated 
+    #and added to the bus power consumption
+    #more on this: https://pandapower.readthedocs.io/en/v2.8.0/elements/shunt.html 
+
     system.update({'generators':gen_list})
     system.update({'loads':load_list})
     system.update({'shunts':shunt_list})
     system.update({'buses':bus_list})
     system.update({'lines':line_list})
     
-    return system
+    return (system, pandapower_results)
 
 def process_admittance_mat(system):
     ybus = system.get('admmat')
@@ -191,22 +196,25 @@ def calc_power_setpoints(system):
     shunts = system.get('shunts')
     
     for load in loads:
-        k = load.get('bus')
-        pset[k] -= load.get('p') #load is a negative injection
-        qset[k] -= load.get('q')
+        if load.get('in_service'):
+            k = load.get('bus')
+            pset[k] -= load.get('p') #load is a negative injection
+            qset[k] -= load.get('q')
     
     #Shunts are as of now handled as loads 
     #this allows them to affect bus voltages - contrary to PandaPower shunts
     for shunt in shunts:
-        k = shunt.get('bus')
-        pset[k] -= shunt.get('p_pu') #shunt values are consumption (load convention)
-        qset[k] -= shunt.get('q_pu')
+        if shunt.get('in_service'):
+            k = shunt.get('bus')
+            pset[k] -= shunt.get('p_pu') #shunt values are consumption (load convention)
+            qset[k] -= shunt.get('q_pu')
         
     for gen in gens:
-        k = gen.get('bus')
-        pset[k] += gen.get('pset') #generator is a positive injection
-        if gen.get('type') == 'pq':
-            qset[k] += gen.get('qset')
+        if gen.get('in_service'):
+            k = gen.get('bus')
+            pset[k] += gen.get('pset') #generator is a positive injection
+            if gen.get('type') == 'pq':
+                qset[k] += gen.get('qset')
     
     if np.size(pv_idx) != 0:
         qset = np.delete(qset, pv_slack_idx, 0)
@@ -322,7 +330,7 @@ def check_pv_bus(system, n_buses, q_full):
     
     gens = system.get('generators')
     for gen in gens:
-        if gen.get('type') == 'pv': #only considering PV-busses
+        if (gen.get('type') == 'pv') and gen.get('in_service'): #only considering in service PV-busses
             k = gen.get('bus')
             if (q_full[k] - q_loads[k]) < gen.get('qmin'):
                 qset = gen.get('qmin')
@@ -371,40 +379,41 @@ def calc_line_flows(system, vmag, delta):
 
     for i in range(n_lines):
         line = system.get('lines')[i]
-        l = line.get('length')
-        parallel = line.get('parallel') #number of lines in parallel
-        from_idx = line.get('from')
-        to_idx = line.get('to')
-        
-        #relevant base values for per unit calculations
-        v_base = system.get('buses')[from_idx].get('v_base')
-        z_base = (v_base ** 2)  / (s_base) #voltage in kV and power in MVA
-        # I_base = S_base_3ph / sqrt(3) * V_base_LL
-        i_base_ka = s_base * 1e3 / (np.sqrt(3) * v_base * 1e3) #base current in kA (power base multiplied by 1e3 instead of 1e6)
-        
-        
-        y_shunt = complex(line.get('g_mu_s_per_km') * 1e-6, 
-                          2 * np.pi * freq * line.get('c_nf_per_km')*1e-9) * l * parallel
-        y_shunt_pu =  y_shunt * z_base # Y = 1/Z, so Y_pu = 1/Z_pu = Y * Z_base
-        
-        z_line = complex(line.get('r_ohm_per_km'), line.get('x_ohm_per_km')) * l / parallel
-        z_line_pu = z_line / z_base
-        
-        #loading voltage magnitude and phase angle as phasor
-        v_1 = get_phasor(vmag, delta, from_idx)
-        v_2 = get_phasor(vmag, delta, to_idx)
-        
-        # I_12 = (V_1 - V_2) / (Z_12) + V_1 / Y_sh / 2
-        
-        i_ft_pu[i] = ((v_1 - v_2) / z_line_pu + v_1 * (y_shunt_pu / 2))
-        i_tf_pu[i] = ((v_2 - v_1) / z_line_pu + v_2 * (y_shunt_pu / 2))
-        
-        s_ft_pu[i] = v_1 * np.conj(i_ft_pu[i])
-        s_tf_pu[i] = v_2 * np.conj(i_tf_pu[i])
-        
-        i_ka[i] = max(np.abs(i_ft_pu[i]), np.abs(i_tf_pu[i])) * i_base_ka
-        
-        loading_percent[i] = (i_ka[i] / line.get('ampacity')) * 100
+        if line.get('in_service'):
+            l = line.get('length')
+            parallel = line.get('parallel') #number of lines in parallel
+            from_idx = line.get('from')
+            to_idx = line.get('to')
+            
+            #relevant base values for per unit calculations
+            v_base = system.get('buses')[from_idx].get('v_base')
+            z_base = (v_base ** 2)  / (s_base) #voltage in kV and power in MVA
+            # I_base = S_base_3ph / sqrt(3) * V_base_LL
+            i_base_ka = s_base * 1e3 / (np.sqrt(3) * v_base * 1e3) #base current in kA (power base multiplied by 1e3 instead of 1e6)
+            
+            
+            y_shunt = complex(line.get('g_mu_s_per_km') * 1e-6, 
+                              2 * np.pi * freq * line.get('c_nf_per_km')*1e-9) * l * parallel
+            y_shunt_pu =  y_shunt * z_base # Y = 1/Z, so Y_pu = 1/Z_pu = Y * Z_base
+            
+            z_line = complex(line.get('r_ohm_per_km'), line.get('x_ohm_per_km')) * l / parallel
+            z_line_pu = z_line / z_base
+            
+            #loading voltage magnitude and phase angle as phasor
+            v_1 = get_phasor(vmag, delta, from_idx)
+            v_2 = get_phasor(vmag, delta, to_idx)
+            
+            # I_12 = (V_1 - V_2) / (Z_12) + V_1 / Y_sh / 2
+            
+            i_ft_pu[i] = ((v_1 - v_2) / z_line_pu + v_1 * (y_shunt_pu / 2))
+            i_tf_pu[i] = ((v_2 - v_1) / z_line_pu + v_2 * (y_shunt_pu / 2))
+            
+            s_ft_pu[i] = v_1 * np.conj(i_ft_pu[i])
+            s_tf_pu[i] = v_2 * np.conj(i_tf_pu[i])
+            
+            i_ka[i] = max(np.abs(i_ft_pu[i]), np.abs(i_tf_pu[i])) * i_base_ka
+            
+            loading_percent[i] = (i_ka[i] / line.get('ampacity')) * 100
         
         
     p_ft_pu = np.real(s_ft_pu)
