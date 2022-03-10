@@ -40,5 +40,3 @@ e_q_lim = True
 results = pf.run_newton_raphson(system, enforce_q_limits = e_q_lim)
 print('\nPandaPower results:\n')
 print(pandapower_results)
-
-
