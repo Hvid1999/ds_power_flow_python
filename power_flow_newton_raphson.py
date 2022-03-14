@@ -3,7 +3,7 @@ import pandas as pd
 import pandapower as pp
 
 def load_pandapower_case(network, enforce_q_limits=False, distributed_slack = False, 
-                         slack_gens = np.array([])):
+                         slack_gens = np.array([]), participation_factors = np.array([])):
     baseMVA = network.sn_mva #base power for system
     freq = network.f_hz
 
@@ -33,7 +33,7 @@ def load_pandapower_case(network, enforce_q_limits=False, distributed_slack = Fa
 
 
     #Setup system dictionary
-    system = {'distributed_slack':distributed_slack, 'admmat':ybus,'slack':slack_dict,
+    system = {'n_buses':ybus.shape[0],'distributed_slack':distributed_slack, 'admmat':ybus,'slack':slack_dict,
               'iteration_limit':15,'tolerance':1e-3, 's_base':baseMVA, 'frequency':freq}
 
     #initializing empty lists
@@ -133,7 +133,7 @@ def load_pandapower_case(network, enforce_q_limits=False, distributed_slack = Fa
                     gen_list[i].update({'slack':False})
                     
         system.update({'generators':gen_list})
-        load_participation_factors(system) #loading either equal p-factors or custom ones
+        load_participation_factors(system, p_factors=participation_factors) #loading either equal p-factors or custom ones
     
     return (system, pandapower_results)
 
@@ -161,8 +161,7 @@ def slack_idx(system):
         return system.get('slack').get('bus')
 
 def init_voltage_vecs(system):
-    ybus = system.get('admmat')
-    n_buses = ybus.shape[0]
+    n_buses = system.get('n_buses')
     #vectors containing voltage magnitude and angle information on all busses
     vmag_full = np.ones((n_buses,1))
     delta_full = np.zeros((n_buses,1))
@@ -214,24 +213,21 @@ def calc_power_vecs(system, vmag, delta, g, b):
 
     #Checking for PV-busses in order to simplify eventual calculations
     pv_idx = get_pv_idx(system)
-    pv_slack_idx = np.sort(np.append(pv_idx, slack_idx(system))) #pv and slack indices
-
-    if np.size(pv_idx) != 0:
-        q = np.delete(q_full, pv_slack_idx, 0) #removing the pv bus indices after calculation
-    else:
-        q = np.delete(q_full, slack_idx(system), 0) #removing slack bus index 
-        
-    p = np.delete(p_full, slack_idx(system), 0)   
     
+    
+    if system.get('distributed_slack'):
+        q = np.delete(q_full, pv_idx, 0) #removing the pv bus indices after calculation
+        p = p_full
+    else:
+        pv_slack_idx = np.sort(np.append(pv_idx, slack_idx(system))) #pv and slack indices
+        q = np.delete(q_full, pv_slack_idx, 0) #removing the pv and slack bus indices after calculation
+        p = np.delete(p_full, slack_idx(system), 0) 
+        
     return p, q, p_full, q_full
 
 
 def calc_power_setpoints(system):
-    ybus = system.get('admmat')
-    n_buses = ybus.shape[0]
-    
-    pv_idx = get_pv_idx(system)
-    pv_slack_idx = np.sort(np.append(pv_idx, slack_idx(system))) #pv and slack indices
+    n_buses = system.get('n_buses')
     
     #loading bus setpoints
     pset = np.zeros((n_buses,1))
@@ -262,14 +258,16 @@ def calc_power_setpoints(system):
             if gen.get('type') == 'pq':
                 qset[k] += gen.get('qset')
     
-    if np.size(pv_idx) != 0:
-        qset = np.delete(qset, pv_slack_idx, 0)
+    pv_idx = get_pv_idx(system)
+    
+    
+    if system.get('distributed_slack'):
+        qset = np.delete(qset, pv_idx, 0)
     else:
-        qset = np.delete(qset, slack_idx(system), 0)
+        pv_slack_idx = np.sort(np.append(pv_idx, slack_idx(system))) #pv and slack indices
+        qset = np.delete(qset, pv_slack_idx, 0) #removing PV and slack bus indices
+        pset = np.delete(pset, slack_idx(system), 0) #removing slack bus index
     
-    pset = np.delete(pset, slack_idx(system), 0)
-    
-    #removing slack bus index
     return pset, qset
 
 
@@ -282,33 +280,20 @@ def calc_mismatch_vecs(system, p, q):
     return del_p, del_q
 
 
-
-def calc_jacobian(system, vmag_full, delta_full, g_full, b_full, p_full, q_full):
-    ybus = system.get('admmat')
-    n_buses = ybus.shape[0]
+def calc_jacobian(system, vmag, delta, g, b, p, q):
+    n_buses = system.get('n_buses')
     
-    jacobian = np.zeros((2*(n_buses-1),2*(n_buses-1)))
+    jacobian = np.zeros((2*(n_buses),2*(n_buses)))
     
     #Pointing to the submatrices
-    j1 = jacobian[0:(n_buses-1),0:(n_buses-1)]
-    j2 = jacobian[0:(n_buses-1),(n_buses-1):(2*(n_buses-1))]
-    j3 = jacobian[(n_buses-1):(2*(n_buses-1)),0:(n_buses-1)]
-    j4 = jacobian[(n_buses-1):(2*(n_buses-1)),(n_buses-1):(2*(n_buses-1))]
-
-    #Excluding slack bus of arbitrary location from calculations
-    vmag = np.delete(vmag_full, slack_idx(system), 0)
-    delta = np.delete(delta_full, slack_idx(system), 0)
-    p = np.delete(p_full, slack_idx(system), 0)
-    q = np.delete(q_full, slack_idx(system), 0)
-    g = np.delete(g_full, slack_idx(system), 0)
-    g = np.delete(g, slack_idx(system), 1)
-    b = np.delete(b_full, slack_idx(system), 0)
-    b = np.delete(b, slack_idx(system), 1)
-
+    j1 = jacobian[0:(n_buses),0:(n_buses)]
+    j2 = jacobian[0:(n_buses),(n_buses):(2*(n_buses))]
+    j3 = jacobian[(n_buses):(2*(n_buses)),0:(n_buses)]
+    j4 = jacobian[(n_buses):(2*(n_buses)),(n_buses):(2*(n_buses))]
 
     #Calculating Jacobian matrix
-    for k in range(n_buses-1):
-        for n in range(n_buses-1):
+    for k in range(n_buses):
+        for n in range(n_buses):
             if k == n: #diagonal elements
                 j1[k,n] = -q[k] - b[k,k] * vmag[k]**2
                 j2[k,n] = p[k] / vmag[k] + g[k,k] * vmag[k]
@@ -320,30 +305,52 @@ def calc_jacobian(system, vmag_full, delta_full, g_full, b_full, p_full, q_full)
                 j2[k,n] = vmag[k] * (g[k,n]*(np.cos(delta[k] - delta[n])) + b[k,n]*np.sin(delta[k] - delta[n]))
                 j3[k,n] = -vmag[k] * vmag[n] * (g[k,n]*(np.cos(delta[k] - delta[n])) + b[k,n]*np.sin(delta[k] - delta[n]))
                 j4[k,n] = vmag[k] * (g[k,n]*(np.sin(delta[k] - delta[n])) - b[k,n]*np.cos(delta[k] - delta[n]))
-
+    
+    if system.get('distributed_slack'):
+        #loading vector of participation factors from the system
+        part_facts = np.zeros((2 * n_buses, 1)) #includes the zero vector below p-factor vector
+        gens = system.get('generators')
+        for gen in gens:
+            if gen.get('slack'):
+                k = gen.get('bus')
+                part_facts[k] = gen.get('participation_factor')
+        jacobian = np.append(jacobian, part_facts, axis = 1)
+    
     return jacobian
 
 def jacobian_calc_simplify(system, jacobian):
-    ybus = system.get('admmat')
-    n_buses = ybus.shape[0]
+    n_buses = system.get('n_buses')
+    
     
     pv_idx = get_pv_idx(system) #reading indices of PV-busses
-    
-    #adjusting indices for jacobian simplification according to slack bus placement
-    #any bus index above the slack bus placement is (actual bus index - 1) due to the slack bus
-    #already being omitted from the jacobian matrix
-    if np.size(pv_idx) != 0:
-        for i in range(np.size(pv_idx)):
-            if pv_idx[i] > slack_idx(system):
-                pv_idx[i] -= 1
-                
-        #simplifies jacobian matrix in the presence of PV-busses by deleting rows and columns    
-        jacobian_calc = np.delete(jacobian, pv_idx + n_buses - 1, 0) #n - 2 because bus 1 is index 0 in the jacobian matrix
-        jacobian_calc = np.delete(jacobian_calc, pv_idx + n_buses - 1, 1) #and the submatrices are (n-1) * (n-1)
-    else:
-        jacobian_calc = jacobian
-    return jacobian_calc
+    row_remove = np.array([], dtype=int)
+    col_remove = np.array([], dtype=int)
 
+    if system.get('distributed_slack'):
+        ref_idx = system.get('reference_bus')
+        #voltage angle is assumed known at the reference bus
+        #the corresponding column of J1 and J3 may therefore be removed
+        col_remove = np.append(col_remove, ref_idx)
+        col_remove = np.append(col_remove, pv_idx + n_buses) #offset of n_buses to reach J2 and J4
+        
+        row_remove = np.append(row_remove, pv_idx + n_buses) #offset of n_buses to reach J3 and J4
+        
+    else:
+        slack_index = slack_idx(system)
+        col_remove = np.append(col_remove, slack_index)
+        col_remove = np.append(col_remove, slack_index + n_buses)
+        row_remove = np.append(row_remove, slack_index)
+        row_remove = np.append(row_remove, slack_index + n_buses)
+        
+        #PV bus simplification
+        col_remove = np.append(col_remove, pv_idx + n_buses) #offset of n_buses to reach J2 and J4
+        row_remove = np.append(row_remove, pv_idx + n_buses) #offset of n_buses to reach J3 and J4
+    
+    #Deleting relevant rows and columns    
+    jacobian_calc = np.delete(jacobian, row_remove, 0) 
+    jacobian_calc = np.delete(jacobian_calc, col_remove, 1)
+    
+    return jacobian_calc
 
 
 def next_iteration(jacobian, vmag, delta, del_p, del_q):
@@ -353,11 +360,56 @@ def next_iteration(jacobian, vmag, delta, del_p, del_q):
     delta_next = x_next[0:np.size(delta)]
     vmag_next = x_next[np.size(delta):]
     return delta_next, vmag_next
+
+
+def dist_next_iteration(jacobian, vmag, delta, k_g, del_p, del_q):
     
+    x = np.row_stack((delta, vmag))
+    x = np.append(x, [[k_g]], axis = 0)
+
+    y = np.row_stack((del_p, del_q))
+
+    x_next = x + np.matmul(np.linalg.inv(jacobian), y) #calculating next iteration
+    
+    delta_next = x_next[0:np.size(delta)]
+    vmag_next = x_next[np.size(delta):(np.size(x_next) - 1)]
+    k_g_next = x_next[-1][0]
+    
+    return delta_next, vmag_next, k_g_next
 
 
-def check_convergence(y, threshold):
+def check_convergence(delta_next, vmag_next, delta, vmag, threshold):
     #returns true if all indices in mismatch vector are below error threshold (tolerance)
+    #based on magnitude in change of iteration values for voltages
+    x_next = np.row_stack((delta_next, vmag_next))
+    x = np.row_stack((delta, vmag))
+    checkvec = np.ones((x.shape))
+    
+    for i in range(np.size(x)):
+        if abs(x[i]) > 0: #avoid division by zero
+            checkvec[i] = (x_next[i] - x[i])/x[i]
+    
+    return np.all(np.absolute(checkvec) < threshold) 
+
+def dist_check_convergence(delta_next, vmag_next, delta, vmag, k_g_next, k_g, threshold):
+    #returns true if all indices in mismatch vector are below error threshold (tolerance)
+    #based on magnitude in change of iteration values for voltages
+    x_next = np.row_stack((delta_next, vmag_next))
+    x_next = np.append(x_next, [[k_g_next]], axis = 0)
+    x = np.row_stack((delta, vmag))
+    x = np.append(x, [[k_g]], axis = 0)
+    checkvec = np.ones((x.shape))
+    
+    for i in range(np.size(x)):
+        if abs(x[i]) > 0: #avoid division by zero
+            checkvec[i] = (x_next[i] - x[i])/x[i]
+    
+    return np.all(np.absolute(checkvec) < threshold) 
+
+
+def check_convergence_old(y, threshold):
+    #returns true if all indices in mismatch vector are below error threshold (tolerance)
+    #based entirely on power mismatches
     return np.all(np.absolute(y) < threshold) 
 
 
@@ -511,7 +563,7 @@ def load_participation_factors(system, p_factors = np.array([])):
         #the sum of the p-factors must be 1
         participation_factors = p_factors
     else:
-        print('Error loading participation factors - check input. Set to equal factors.')
+        print('Error loading participation factors - check input. Set to equal factors (standard case).\n')
         participation_factors = np.ones(num_slack)
         participation_factors = participation_factors / num_slack
     
@@ -525,6 +577,23 @@ def load_participation_factors(system, p_factors = np.array([])):
     system.update({'generators':gen_list})
     return
         
+
+def slack_distribution(system, k_g):
+    
+    gens = system.get('generators')
+    slackvec = np.zeros((system.get('n_buses'), 1))
+    
+    for gen in gens:
+        if gen.get('slack'):
+            k = gen.get('bus')
+            p_fact = gen.get('participation_factor')
+            #k_g is a negative injection, but the absolute value is taken here
+            #because the vector denotes how much each slack generator injects
+            #to compensate for losses
+            slackvec[k] = p_fact * abs(k_g) 
+    
+    return slackvec
+
 
 def run_newton_raphson(system, enforce_q_limits = False):
     
@@ -560,34 +629,14 @@ def run_newton_raphson(system, enforce_q_limits = False):
             tolerance = system.get('tolerance')
         
             for i in range(1, iteration_limit + 1):
-                (delta, vmag) = next_iteration(jacobian_calc, vmag, delta, del_p, del_q)
+                (delta_next, vmag_next) = next_iteration(jacobian_calc, vmag, delta, del_p, del_q)
                 
-                delta_full[non_slack_idx] = delta #updating voltage angles on all busses except slack
-                vmag_full[pq_idx] = vmag #updating voltage magnitudes on non-slack and non-PV busses
-                
-                (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
-        
-                jacobian = calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
-        
-                jacobian_calc = jacobian_calc_simplify(system, jacobian)
-        
-                (del_p, del_q) = calc_mismatch_vecs(system, p, q)
-                
-                y = np.row_stack((del_p, del_q))
-        
-        
-                # print("\nIteration %d:\n" % i)
-                # print("delta:\n",delta * 180/np.pi)
-                # print("vmag:\n",vmag)
-                # print("mismatch vector:\n", y)
-                # print("Jacobian:\n", jacobian_calc)
-                
-                
-                if check_convergence(y, tolerance):
+                if check_convergence(delta_next, vmag_next, delta, vmag, tolerance):
                     recalculate = check_pv_bus(system, n_buses, q_full)
                     
                     if recalculate:
                         print('Recalculating power flow...\n')
+                        break
                     else:
                         print("Power flow converged at %d iterations (tolerance of %f).\n" % (i, tolerance))
                         #print("Mismatch vector (P injections)\n", del_p)
@@ -605,6 +654,9 @@ def run_newton_raphson(system, enforce_q_limits = False):
                             if typelist[i] == '':
                                 typelist[i] = 'PQ'
                         
+                        delta_full[non_slack_idx] = delta_next #updating voltage angles on all busses except slack
+                        vmag_full[pq_idx] = vmag_next #updating voltage magnitudes on non-slack and non-PV busses
+                        
                         d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
                         df = pd.DataFrame(data=d, index = np.arange(n_buses))
                         df.index.name = 'bus'
@@ -614,6 +666,24 @@ def run_newton_raphson(system, enforce_q_limits = False):
                 elif i == iteration_limit:
                     print("Power flow did not converge after %d iterations (tolerance of %f).\n" % (i, tolerance))
                     return None
+
+                delta_full[non_slack_idx] = delta_next #updating voltage angles on all busses except slack
+                vmag_full[pq_idx] = vmag_next #updating voltage magnitudes on non-slack and non-PV busses
+                
+                delta = np.copy(delta_next)
+                vmag = np.copy(vmag_next)
+                
+                (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
+        
+                jacobian = calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
+        
+                jacobian_calc = jacobian_calc_simplify(system, jacobian)
+        
+                (del_p, del_q) = calc_mismatch_vecs(system, p, q)
+                
+                y = np.row_stack((del_p, del_q))
+                
+            #Tracking how many times the while-loop has run
             m += 1
             if m > 40:
                 print('\nError - endless loop. Calculation terminated.\n')
@@ -645,30 +715,10 @@ def run_newton_raphson(system, enforce_q_limits = False):
         tolerance = system.get('tolerance')
     
         for i in range(1, iteration_limit + 1):
-            (delta, vmag) = next_iteration(jacobian_calc, vmag, delta, del_p, del_q)
-            #Calculating initial power vectors
+            (delta_next, vmag_next) = next_iteration(jacobian_calc, vmag, delta, del_p, del_q)
             
-            delta_full[non_slack_idx] = delta #updating voltage angles on all busses except slack
-            vmag_full[pq_idx] = vmag #updating voltage magnitudes on non-slack and non-PV busses
-            
-            (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
-    
-            jacobian = calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
-    
-            jacobian_calc = jacobian_calc_simplify(system, jacobian)
-    
-            (del_p, del_q) = calc_mismatch_vecs(system, p, q)
-            
-            y = np.row_stack((del_p, del_q))
-    
-    
-            # print("\nIteration %d:\n" % i)
-            # print("delta:\n",delta * 180/np.pi)
-            # print("vmag:\n",vmag)
-            # print("mismatch vector:\n", y)
-            # print("Jacobian:\n", jacobian_calc)
-    
-            if check_convergence(y, tolerance):
+            if check_convergence(delta_next, vmag_next, delta, vmag, tolerance):
+                
                 print("Power flow converged at %d iterations (tolerance of %f).\n" % (i, tolerance))
                 #print("Mismatch vector (P injections)\n", del_p)
                 #print("Mismatch vector (Q injections)\n", del_q)
@@ -684,28 +734,44 @@ def run_newton_raphson(system, enforce_q_limits = False):
                     if typelist[i] == '':
                         typelist[i] = 'PQ'
                 
+                delta_full[non_slack_idx] = delta_next #updating voltage angles on all busses except slack
+                vmag_full[pq_idx] = vmag_next #updating voltage magnitudes on non-slack and non-PV busses
+                
                 d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
                 df = pd.DataFrame(data=d, index = np.arange(n_buses))
                 df.index.name = 'bus'
                 print(df)
-                #break
                 break
             
             elif i == iteration_limit:
                 print("Power flow did not converge after %d iterations (tolerance of %f).\n" % (i, tolerance))
                 return None
+            
+            delta_full[non_slack_idx] = delta_next #updating voltage angles on all busses except slack
+            vmag_full[pq_idx] = vmag_next #updating voltage magnitudes on non-slack and non-PV busses
+            
+            delta = np.copy(delta_next)
+            vmag = np.copy(vmag_next)
+            
+            (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
     
+            jacobian = calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
     
-    p_loss = np.sum(p_full) #this simple line should work due to power flows being injections
+            jacobian_calc = jacobian_calc_simplify(system, jacobian)
     
+            (del_p, del_q) = calc_mismatch_vecs(system, p, q)
+            
+            y = np.row_stack((del_p, del_q))   
+    
+    #Saving and exporting power flow results as dictionary
     vmag_res = df['vmag_pu']
     vmag_res = pd.Series.to_numpy(vmag_res)
 
     delta_res = df['delta_deg']
     delta_res = pd.Series.to_numpy(delta_res) * np.pi / 180
 
+    p_loss = calc_system_losses(system, vmag_res, delta_res)    
 
-    #test code for line flow calculations
     line_flows = calc_line_flows(system, vmag_res, delta_res)
     
     
@@ -714,8 +780,227 @@ def run_newton_raphson(system, enforce_q_limits = False):
     
     return results   
 
+def run_newton_raphson_distributed(system, enforce_q_limits = False):
+    
+    if enforce_q_limits == True:
+        recalculate = True
+        m = 0
+        
+        while recalculate == True:
+            
+            (n_buses, g, b) = process_admittance_mat(system)
+
+            (vmag, delta, vmag_full, delta_full) = init_voltage_vecs(system)
+
+            k_g = 0.0
+
+            (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
+
+            (pset, qset) = calc_power_setpoints(system)
+            
+            (del_p, del_q) = calc_mismatch_vecs(system, p, q)
+
+            jacobian = calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
+
+            jacobian_calc = jacobian_calc_simplify(system, jacobian)
 
 
+            pv_idx = get_pv_idx(system)
+            pq_idx = np.arange(n_buses)
+            non_ref_idx = np.delete(pq_idx, system.get('reference_bus'), 0)
+            pq_idx = np.delete(pq_idx, pv_idx, 0)
+
+            iteration_limit = system.get('iteration_limit')
+            tolerance = system.get('tolerance')
+        
+            for i in range(1, iteration_limit + 1):
+                (delta_next, vmag_next, k_g_next) = dist_next_iteration(jacobian_calc, vmag, delta, k_g, 
+                                                                           del_p, del_q)
+                
+                if dist_check_convergence(delta_next, vmag_next, delta, vmag, k_g_next, k_g, tolerance):
+                    recalculate = check_pv_bus(system, n_buses, q_full)
+                    
+                    if recalculate:
+                        print('Recalculating power flow...\n')
+                        break
+                    else:
+                        print("Power flow converged at %d iterations (tolerance of %f).\n" % (i, tolerance))
+                        #print("Mismatch vector (P injections)\n", del_p)
+                        #print("Mismatch vector (Q injections)\n", del_q)
+                        print("\nTable of results (power values are injections):\n")
+                        typelist = ['' for i in range(n_buses)]
+                    
+                        for gen in system.get('generators'):
+                            k = gen.get('bus')
+                            typelist[k] = gen.get('type').upper()
+                        
+                        for i in range(n_buses):
+                            if typelist[i] == '':
+                                typelist[i] = 'PQ'
+                        
+                        delta_full[non_ref_idx] = delta_next #updating voltage angles on all busses except reference
+                        vmag_full[pq_idx] = vmag_next #updating voltage magnitudes on non-PV busses
+                        k_g = k_g_next
+                        
+                        d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
+                        df = pd.DataFrame(data=d, index = np.arange(n_buses))
+                        df.index.name = 'bus'
+                        print(df)
+                        break
+                
+                elif i == iteration_limit:
+                    print("Power flow did not converge after %d iterations (tolerance of %f).\n" % (i, tolerance))
+                    return None
+                    
+                delta_full[non_ref_idx] = delta_next #updating voltage angles on all busses except reference
+                vmag_full[pq_idx] = vmag_next #updating voltage magnitudes on non-PV busses
+                
+                delta = np.copy(delta_next)
+                vmag = np.copy(vmag_next)
+                k_g = k_g_next
+                
+                (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
+
+                jacobian = calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
+
+                jacobian_calc = jacobian_calc_simplify(system, jacobian)
+                
+                del_p = pset - (p - slack_distribution(system, k_g))
+                del_q = qset - q
+
+
+            
+                
+            #Tracking how many times the while-loop has run
+            m += 1
+            if m > 40:
+                print('\nError - endless loop. Calculation terminated.\n')
+                break
+        
+    else:
+        
+        (n_buses, g, b) = process_admittance_mat(system)
+
+        (vmag, delta, vmag_full, delta_full) = init_voltage_vecs(system)
+
+        k_g = 0.0
+
+        (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
+
+        (pset, qset) = calc_power_setpoints(system)
+
+        (del_p, del_q) = calc_mismatch_vecs(system, p, q)
+
+        jacobian = calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
+
+        jacobian_calc = jacobian_calc_simplify(system, jacobian)
+
+
+        pv_idx = get_pv_idx(system)
+        pq_idx = np.arange(n_buses)
+        non_ref_idx = np.delete(pq_idx, system.get('reference_bus'), 0)
+        pq_idx = np.delete(pq_idx, pv_idx, 0)
+
+        iteration_limit = system.get('iteration_limit')
+        tolerance = system.get('tolerance')
+    
+        for i in range(1, iteration_limit + 1):
+            (delta_next, vmag_next, k_g_next) = dist_next_iteration(jacobian_calc, vmag, delta, k_g, 
+                                                                       del_p, del_q)
+            
+            if dist_check_convergence(delta_next, vmag_next, delta, vmag, k_g_next, k_g, tolerance):
+                print("Power flow converged at %d iterations (tolerance of %f).\n" % (i, tolerance))
+                #print("Mismatch vector (P injections)\n", del_p)
+                #print("Mismatch vector (Q injections)\n", del_q)
+                print("\nTable of results (power values are injections):\n")
+                typelist = ['' for i in range(n_buses)]
+            
+                for gen in system.get('generators'):
+                    k = gen.get('bus')
+                    typelist[k] = gen.get('type').upper()
+                
+                for i in range(n_buses):
+                    if typelist[i] == '':
+                        typelist[i] = 'PQ'
+                
+                delta_full[non_ref_idx] = delta_next #updating voltage angles on all busses except reference
+                vmag_full[pq_idx] = vmag_next #updating voltage magnitudes on non-PV busses
+                k_g = k_g_next
+                
+                d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
+                df = pd.DataFrame(data=d, index = np.arange(n_buses))
+                df.index.name = 'bus'
+                print(df)
+                break
+            
+            elif i == iteration_limit:
+                print("Power flow did not converge after %d iterations (tolerance of %f).\n" % (i, tolerance))
+                return None
+                
+            delta_full[non_ref_idx] = delta_next #updating voltage angles on all busses except reference
+            vmag_full[pq_idx] = vmag_next #updating voltage magnitudes on non-PV busses
+            
+            delta = np.copy(delta_next)
+            vmag = np.copy(vmag_next)
+            k_g = k_g_next
+            
+            (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
+
+            jacobian = calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
+
+            jacobian_calc = jacobian_calc_simplify(system, jacobian)
+            
+            del_p = pset - (p - slack_distribution(system, k_g))
+            del_q = qset - q  
+    
+    #Saving and exporting power flow results as dictionary
+    vmag_res = df['vmag_pu']
+    vmag_res = pd.Series.to_numpy(vmag_res)
+
+    delta_res = df['delta_deg']
+    delta_res = pd.Series.to_numpy(delta_res) * np.pi / 180
+
+    p_loss = calc_system_losses(system, vmag_res, delta_res)    
+
+    line_flows = calc_line_flows(system, vmag_res, delta_res)
+    
+    slack_distribution_df = pd.DataFrame(data={'p_pu':slack_distribution(system, k_g).flatten()}, 
+                                            index = np.arange(n_buses))
+
+    slack_distribution_df.index.name = 'bus'
+
+    slack_gen_indices = np.array([], dtype=int)
+
+    gens = system.get('generators')
+
+    for gen in gens:
+        if gen.get('slack'):
+            slack_gen_indices = np.append(slack_gen_indices, gen.get('bus'))
+
+    slack_distribution_df = slack_distribution_df.filter(items = slack_gen_indices, axis = 0)
+    
+    #Participation factors are defined bus-wise
+    #some test cases have multiple generators at a single bus
+    #the line below is a workaround to avoid showing multiple busses and too much slack
+    slack_distribution_df = slack_distribution_df.groupby(level=0).mean()
+
+    print("\nSlack distribution across slack generators:\n")
+    print(slack_distribution_df)
+    
+    results = {'bus_results':df, 'line_flows':line_flows, 'total_losses_pu':p_loss, 
+               'mismatches':calc_mismatch_vecs(system, p, q), 'slack_distribution':slack_distribution_df}
+    
+    return results 
+
+
+def run_power_flow(system, enforce_q_limits = False, distributed_slack = False):
+    
+    if distributed_slack:
+        results = run_newton_raphson_distributed(system, enforce_q_limits)
+    else:
+        results = run_newton_raphson(system, enforce_q_limits)
+    
+    return results
 
 #=============================================================================
 # def calc_power_from_to(system, vmag, delta, from_idx, to_idx):
@@ -816,3 +1101,69 @@ def run_newton_raphson(system, enforce_q_limits = False):
 
 #####################################################
 
+
+# =============================================================================
+#Jacobian without support for distributed slack:
+    
+
+# def calc_jacobian(system, vmag_full, delta_full, g_full, b_full, p_full, q_full):
+#     ybus = system.get('admmat')
+#     n_buses = ybus.shape[0]
+#     
+#     jacobian = np.zeros((2*(n_buses-1),2*(n_buses-1)))
+#     
+#     #Pointing to the submatrices
+#     j1 = jacobian[0:(n_buses-1),0:(n_buses-1)]
+#     j2 = jacobian[0:(n_buses-1),(n_buses-1):(2*(n_buses-1))]
+#     j3 = jacobian[(n_buses-1):(2*(n_buses-1)),0:(n_buses-1)]
+#     j4 = jacobian[(n_buses-1):(2*(n_buses-1)),(n_buses-1):(2*(n_buses-1))]
+# 
+#     #Excluding slack bus of arbitrary location from calculations
+#     vmag = np.delete(vmag_full, slack_idx(system), 0)
+#     delta = np.delete(delta_full, slack_idx(system), 0)
+#     p = np.delete(p_full, slack_idx(system), 0)
+#     q = np.delete(q_full, slack_idx(system), 0)
+#     g = np.delete(g_full, slack_idx(system), 0)
+#     g = np.delete(g, slack_idx(system), 1)
+#     b = np.delete(b_full, slack_idx(system), 0)
+#     b = np.delete(b, slack_idx(system), 1)
+# 
+# 
+#     #Calculating Jacobian matrix
+#     for k in range(n_buses-1):
+#         for n in range(n_buses-1):
+#             if k == n: #diagonal elements
+#                 j1[k,n] = -q[k] - b[k,k] * vmag[k]**2
+#                 j2[k,n] = p[k] / vmag[k] + g[k,k] * vmag[k]
+#                 j3[k,n] = p[k] - g[k,k] * vmag[k]**2
+#                 j4[k,n] = q[k] / vmag[k] - b[k,k] * vmag[k]
+# 
+#             else: #off-diagonal elements
+#                 j1[k,n] = vmag[k] * vmag[n] * (g[k,n]*(np.sin(delta[k] - delta[n])) - b[k,n]*np.cos(delta[k] - delta[n]))
+#                 j2[k,n] = vmag[k] * (g[k,n]*(np.cos(delta[k] - delta[n])) + b[k,n]*np.sin(delta[k] - delta[n]))
+#                 j3[k,n] = -vmag[k] * vmag[n] * (g[k,n]*(np.cos(delta[k] - delta[n])) + b[k,n]*np.sin(delta[k] - delta[n]))
+#                 j4[k,n] = vmag[k] * (g[k,n]*(np.sin(delta[k] - delta[n])) - b[k,n]*np.cos(delta[k] - delta[n]))
+# 
+#     return jacobian
+# 
+# def jacobian_calc_simplify(system, jacobian):
+#     ybus = system.get('admmat')
+#     n_buses = ybus.shape[0]
+#     
+#     pv_idx = get_pv_idx(system) #reading indices of PV-busses
+#     
+#     #adjusting indices for jacobian simplification according to slack bus placement
+#     #any bus index above the slack bus placement is (actual bus index - 1) due to the slack bus
+#     #already being omitted from the jacobian matrix
+#     if np.size(pv_idx) != 0:
+#         for i in range(np.size(pv_idx)):
+#             if pv_idx[i] > slack_idx(system):
+#                 pv_idx[i] -= 1
+#                 
+#         #simplifies jacobian matrix in the presence of PV-busses by deleting rows and columns    
+#         jacobian_calc = np.delete(jacobian, pv_idx + n_buses - 1, 0) #n - 2 because bus 1 is index 0 in the jacobian matrix
+#         jacobian_calc = np.delete(jacobian_calc, pv_idx + n_buses - 1, 1) #and the submatrices are (n-1) * (n-1)
+#     else:
+#         jacobian_calc = jacobian
+#     return jacobian_calc
+# =============================================================================

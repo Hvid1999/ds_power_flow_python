@@ -7,8 +7,8 @@ pd.options.display.float_format = '{:.6f}'.format #avoid scientific notation
 
 #==============================================================================
 #network = nw.case4gs()
-#network = nw.case5()
-network = nw.case6ww()
+network = nw.case5()
+#network = nw.case6ww()
 #network = nw.case9()
 #network = nw.case14()
 #network = nw.case24_ieee_rts()
@@ -22,9 +22,10 @@ network = nw.case6ww()
 #https://pandapower.readthedocs.io/en/v2.8.0/networks/power_system_test_cases.html
 #==============================================================================
 
-e_q_lim = False
+e_q_lim = True
 dist_slack = True
 slack_gens = np.array([]) #generator list indices (generators 0, 1 .. G)
+participation_factors = np.array([]) 
 
 #Contingency testing
 #network.load['in_service'][0] = False
@@ -32,20 +33,24 @@ slack_gens = np.array([]) #generator list indices (generators 0, 1 .. G)
 
 #function loading test case system information and power flow results from PandaPower
 (system, pandapower_results) = pf.load_pandapower_case(network, enforce_q_limits = e_q_lim,
-                                                       distributed_slack = dist_slack)
+                                                       distributed_slack = dist_slack, slack_gens = slack_gens,
+                                                       participation_factors = participation_factors)
+
+
+
+results = pf.run_power_flow(system, enforce_q_limits=e_q_lim, distributed_slack=dist_slack)
 
 
 #Plan for adjusting code to incorporate distributed slack:
     
 #==============================================================================
-#To Do:
-
-#Tweak functions to work for both distributed and single slack power flow
+#To Do (listed by priority):
     
-#Adjust the Jacobian function for distributed slack
+#Add a function to check real power generator limit violations for distributed slack
+#consider what should be done in this case
 
-#Adjust convergence criterium of power flow to not be based on nominal
-#setpoints directly (mismatch vector), but on the change from the last value
+#Investigate consistency of results
+
 
 #==============================================================================
 
@@ -54,6 +59,8 @@ slack_gens = np.array([]) #generator list indices (generators 0, 1 .. G)
 
 #Add function to load participation factors
 
+#Adjust the Jacobian function for distributed slack
+
 #Alter the system loading function
     #Generator list includes the external grid slack bus object
     #Generators have a 'slack' boolean parameter
@@ -61,27 +68,19 @@ slack_gens = np.array([]) #generator list indices (generators 0, 1 .. G)
     #The power setpoint of the original slack bus generator is (load - generation)
     #Original slack bus treated as PV-bus
 
+#Tweak functions to work for both distributed and single slack power flow
+
+#Adjust convergence criterium of power flow 
+
+#At the end of Newton-Raphson for distributed slack, print the mismatch vectors,
+#the system slack and how much of the slack is distributed to each bus
+#to see if it aligns with mismatches
+
 #==============================================================================
 
 
-#%%
 
-#Augmented to include distributed slack:
 
-(n_buses, g, b) = pf.process_admittance_mat(system)
 
-(vmag, delta, vmag_full, delta_full) = pf.init_voltage_vecs(system)
 
-#%%
 
-# Functions not yet changed:
-
-# (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
-
-# jacobian = calc_jacobian(system, vmag_full, delta_full, g, b, p_full, q_full)
-
-# jacobian_calc = jacobian_calc_simplify(system, jacobian)
-
-# pf.check_convergence(y, threshold)
-
-# and more...
