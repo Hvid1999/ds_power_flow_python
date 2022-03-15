@@ -448,6 +448,41 @@ def check_pv_bus(system, n_buses, q_full):
     return limit_violation
 
 
+def check_p_limits(system, p):
+    #calculate vector of generator outputs (p - p_load)
+    
+    #for systems with multiple generators on a single bus (typically static generators)
+    #compare sum of generator outputs to sum of maximum power outputs
+    p_gen = np.copy(p)
+    
+    gens = system.get('generators')
+    loads = system.get('loads')
+    # p_gen = np.zeros((system.get('n_buses'),1))
+    #p_load = np.copy(p_gen)
+    p_limits = np.zeros((system.get('n_buses'),1))
+    gen_idx = np.array([], dtype=int)
+
+    #Calculating vector of generator outputs
+
+    for load in loads:
+        k = load.get('bus')
+        p_gen[k] += load.get('p') #removing the negative load injections from the power vector
+
+    for i in range(len(gens)):
+        k = gens[i].get('bus')
+        gen_idx = np.append(gen_idx, k)
+        if not (gens[i].get('pmax') is None):
+            p_limits[k] += gens[i].get('pmax')
+
+    for k in np.unique(gen_idx):
+        if p_gen[k] > p_limits[k]:
+            magnitude = p_gen[k] - p_limits[k]
+            print("\nGenerator(s) real power limit(s) exceeded at bus %i by %f pu.\n" 
+                  % (k, magnitude))
+            
+    return
+
+
 def get_phasor(mags, args, idx):
     return complex(mags[idx]*np.cos(args[idx]), mags[idx]*np.sin(args[idx]))
     
@@ -552,7 +587,7 @@ def load_participation_factors(system, p_factors = np.array([])):
     #if no array is entered, slack is distributed evenly among generators participating in slack
     gen_list = system.get('generators')
     
-    slack_gens = [gen for gen in gen_list if gen.get('slack') == True]
+    slack_gens = [gen for gen in gen_list if (gen.get('slack') and gen.get('in_service'))]
     num_slack = np.size(slack_gens)
     
     if np.size(p_factors) == 0: #standard case for no input
@@ -571,8 +606,11 @@ def load_participation_factors(system, p_factors = np.array([])):
     
     for i in range(np.size(gen_list)):
         if gen_list[i].get('slack'):
-            gen_list[i].update({'participation_factor':participation_factors[j]})
-            j += 1
+            if gen_list[i].get('in_service'):
+                gen_list[i].update({'participation_factor':participation_factors[j]})
+                j += 1
+            else:
+                gen_list[i].update({'participation_factor':0.0}) #if the generator is disabled
                 
     system.update({'generators':gen_list})
     return
@@ -593,6 +631,53 @@ def slack_distribution(system, k_g):
             slackvec[k] = p_fact * abs(k_g) 
     
     return slackvec
+
+
+def load_variation(system, load_indices, scalings):
+    #accepts an array of load indices to scale and an array of the 
+    #corresponding scaling factors
+    
+    loads = system.get('loads')
+    gens = system.get('generators')
+    j = 0
+    psi_load = 0
+    
+    for i in load_indices:
+        p_old = loads[i].get('p')
+        p_new = loads[i].get('p') * scalings[j]
+        psi_load += p_new - p_old
+        loads[i].update({'p':p_new})
+        j += 1
+        print("\nLoad at bus %i changed from %f to %f.\n" % (loads[i].get('bus'), p_old, p_new))
+    
+    print("\nTotal variation in load: %f pu\n" % psi_load)
+    
+    #add the corresponding slack to each slack generator after load variation
+    for gen in gens:
+        if gen.get('slack'):
+            pset = gen.get('pset')
+            pset += gen.get('participation_factor') * psi_load
+            gen.update({'pset':pset})
+
+    return
+
+
+def toggle_element(system, network):
+    
+    #Toggle one of the following:
+        #Load
+        #Generator
+        #Shunt
+        #Line
+        #Transformer
+    
+    #If Line or Transformer, redo the Pandapower flow to extract new Y_bus
+    #or manually manipulate the Y_bus, whichever is easiest/fastest
+    
+    #Interactive code with inputs?
+    
+    
+    return
 
 
 def run_newton_raphson(system, enforce_q_limits = False):
@@ -989,6 +1074,8 @@ def run_newton_raphson_distributed(system, enforce_q_limits = False):
     
     results = {'bus_results':df, 'line_flows':line_flows, 'total_losses_pu':p_loss, 
                'mismatches':calc_mismatch_vecs(system, p, q), 'slack_distribution':slack_distribution_df}
+    
+    check_p_limits(system, p_full)
     
     return results 
 
