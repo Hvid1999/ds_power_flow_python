@@ -7,7 +7,8 @@ def load_pandapower_case(network, enforce_q_limits=False, distributed_slack = Fa
     baseMVA = network.sn_mva #base power for system
     freq = network.f_hz
 
-    pp.runpp(network, enforce_q_lims = enforce_q_limits) #run power flow
+    #run PandaPower power flow
+    pp.runpp(network, enforce_q_lims = enforce_q_limits, trafo_model='pi', trafo_loading='power')
     #Saving PandaPower results and per-unitizing power values
     pandapower_results = network.res_bus
     pandapower_results['p_pu'] = pandapower_results.p_mw/baseMVA
@@ -103,7 +104,10 @@ def load_pandapower_case(network, enforce_q_limits=False, distributed_slack = Fa
                    'tap_side', 'tap_step_percent']]
 
     buses = buses[['in_service','vn_kv', 'max_vm_pu', 'min_vm_pu','name']]
-
+    
+    #loading power factors for loads
+    load['pf'] = load['p']/(np.sqrt(load['p']**2 + load['q']**2))
+    
     #Setup system dictionary
     system = {'n_buses':ybus.shape[0],'distributed_slack':distributed_slack, 'admmat':ybus,'slack':slack,
               'iteration_limit':15,'tolerance':1e-3, 's_base':baseMVA, 'frequency':freq}
@@ -450,10 +454,19 @@ def check_pv_bus(system, n_buses, q_full):
     
     loads = system.get('loads')
     gens = system.get('generators')
+    shunts = system.get('shunts')
+    
     
     for i in range(len(loads.index)):
         k = loads.bus[i]
-        q_loads[k] = -loads.q[i]
+        q_loads[k] -= loads.q[i]
+        
+    for i in range(len(shunts.index)):
+        k = shunts.bus[i]
+        q_loads[k] -= shunts.q[i]
+    
+    #Note: This should perhaps account for any sgens present on the same bus
+    #However, not relevant for the New England 39-bus system
     
     for i in range(len(gens.index)):
         if (gens.type[i] == 'pv') and (gens.in_service[i]): #only considering in service PV-busses
@@ -510,6 +523,102 @@ def check_p_limits(system, p):
             print("\nGenerator(s) real power limit(s) exceeded at bus %i by %f pu.\n" 
                   % (k, magnitude))
             
+    return
+
+
+def check_q_limits(system, q):
+    #Only relevant if reactive power limits are not enforced in the power flow
+    
+    #for systems with multiple generators on a single bus (typically static generators)
+    #compare sum of generator outputs to sum of maximum power outputs
+    q_gen = np.copy(q)
+    
+    gens = system.get('generators')
+    loads = system.get('loads')
+    shunts = system.get('shunts')
+    # p_gen = np.zeros((system.get('n_buses'),1))
+    #p_load = np.copy(p_gen)
+    q_max = np.zeros((system.get('n_buses'),1))
+    q_min = np.zeros((system.get('n_buses'),1))
+    gen_idx = np.array([], dtype=int)
+
+    #Calculating vector of generator outputs
+
+    for i in range(len(loads.index)):
+        k = loads.bus[i]
+        q_gen[k] += loads.q[i] #removing the negative load injections from the power vector
+    
+    for i in range(len(shunts.index)):
+        k = shunts.bus[i]
+        q_gen[k] += shunts.q[i] 
+
+    for i in range(len(gens.index)):
+        k = gens.bus[i]
+        gen_idx = np.append(gen_idx, k)
+        if not (np.isnan(gens.qmax[i]) or (gens.qmax[i] is None)): #if it is not nan or None
+            q_max[k] += gens.qmax[i]
+            
+        if not (np.isnan(gens.qmin[i]) or (gens.qmin[i] is None)):
+            q_min[k] += gens.qmin[i]
+
+    for k in np.unique(gen_idx):
+        if q_gen[k] > q_max[k]:
+            magnitude = q_gen[k] - q_max[k]
+            print("\nGenerator(s) reactive power upper limit(s) exceeded at bus %i by %f pu.\n" 
+                  % (k, magnitude))
+        elif q_gen[k] < q_min[k]:
+            magnitude = abs(q_min[k] - q_gen[k])
+            print("\nGenerator(s) reactive power lower limit(s) exceeded at bus %i by %f pu.\n" 
+                  % (k, magnitude))
+            
+    return
+
+def check_bus_voltage(system, vmag):
+    bus = system.get('buses')
+    
+    for i in range(len(bus.index)):
+        if vmag[i] > bus.max_vm_pu[i]:
+            magnitude = vmag[i] - bus.max_vm_pu[i]
+            print("\nBus voltage upper limit exceeded at bus %i by %f pu.\n" 
+                  % (i, magnitude))
+        elif vmag[i] < bus.min_vm_pu[i]:
+            magnitude = bus.min_vm_pu[i] - vmag[i]
+            print("\nBus voltage lower limit exceeded at bus %i by %f pu.\n" 
+                  % (i, magnitude))
+        elif (abs(vmag[i] - bus.min_vm_pu[i]) < 0.005) or (abs(vmag[i] - bus.max_vm_pu[i]) < 0.005):
+            print("\nBus voltage near limit at bus %i (%f pu).\n" % (i, vmag[i]))
+    return
+
+def check_line_trafo_loading(system, results):
+    lines = system.get('lines')
+    trafo = system.get('transformers')
+    l_flows = results.get('line_flows')
+    t_flows = results.get('transformer_flows')
+    
+    for i in range(len(l_flows.index)):
+        if l_flows.loading_percent[i] > 100:
+            f = lines['from'][i]
+            t = lines['to'][i]
+            print("\nLine %i (bus %i to %i) overloaded at %f %%.\n" 
+                  % (i, f, t, l_flows.loading_percent[i]))
+        elif (100 - l_flows.loading_percent[i]) < 5:
+            f = lines['from'][i]
+            t = lines['to'][i]
+            print("\nLine %i (bus %i to %i) near limit at %f %%.\n" 
+                  % (i, f, t, l_flows.loading_percent[i]))
+    
+    for i in range(len(t_flows.index)):
+        if t_flows.loading_percent[i] > 100:
+            lv = trafo.lv_bus[i]
+            hv = trafo.hv_bus[i]
+            print("\nTransformer %i (bus %i to %i) overloaded at %f %%.\n" 
+                  % (i, lv, hv, t_flows.loading_percent[i]))
+        elif (100 - t_flows.loading_percent[i]) < 5:
+            lv = trafo.lv_bus[i]
+            hv = trafo.hv_bus[i]
+            print("\nTransformer %i (bus %i to %i) near limit at %f %%.\n" 
+                  % (i, lv, hv, t_flows.loading_percent[i]))
+    
     return
 
 
@@ -594,6 +703,53 @@ def calc_line_flows(system, vmag, delta):
          's_tf_pu':np.abs(s_tf_pu)}
     df = pd.DataFrame(data=d, index = np.arange(n_lines))
     df.index.name = 'line'
+    
+    return df
+
+
+def calc_transformer_loadings(system, vmag, delta):
+    #Note: Simplified representation of transformer as a series impedance between busses
+    #(typical per-unit representation)
+
+    
+    trafo = system.get('transformers')
+    ybus = system.get('admmat')
+    s_base = system.get('s_base')
+    n_trafo = len(trafo.index)
+    
+    #initializing empty arrays for storing data
+    i_lv_pu = np.zeros(n_trafo, dtype = complex)
+    i_hv_pu = np.zeros(n_trafo, dtype = complex)
+
+    s_lv_pu = np.zeros(n_trafo, dtype = complex)
+    s_hv_pu = np.zeros(n_trafo, dtype = complex)
+    
+    loading_percent = np.zeros(n_trafo)
+    
+    for i in range(n_trafo):
+        lv = trafo.lv_bus[i]
+        hv = trafo.hv_bus[i]
+        v_lv = get_phasor(vmag, delta, lv)
+        v_hv = get_phasor(vmag, delta, hv)
+        x_t = 1 / ybus[lv, hv] #loading the series impedance from the admittance matrix
+        
+        i_lv_pu[i] = (v_lv - v_hv) / x_t
+        i_hv_pu[i] = (v_hv - v_lv) / x_t
+        
+        s_lv_pu[i] = v_lv * np.conj(i_lv_pu[i])
+        s_hv_pu[i] = v_hv * np.conj(i_hv_pu[i])
+        
+        s_mva = abs(max(s_lv_pu[i], s_hv_pu[i]) * s_base)
+        
+        loading_percent[i] = (s_mva / trafo['s_rated'][i]) * 100
+    
+    d = {'loading_percent':loading_percent, 'p_lv_pu':np.real(s_lv_pu), 'p_hv_pu':np.real(s_hv_pu), 
+         'p_loss_pu':np.real(s_lv_pu) + np.real(s_hv_pu), 'q_lv_pu':np.imag(s_lv_pu), 
+         'q_hv_pu':np.imag(s_hv_pu), 'q_loss_pu':np.imag(s_lv_pu) + np.imag(s_hv_pu), 
+         'i_lv_pu':np.abs(i_lv_pu), 'i_hv_pu':np.abs(i_hv_pu), 's_lv_pu':np.abs(s_lv_pu), 
+         's_hv_pu':np.abs(s_hv_pu)}
+    df = pd.DataFrame(data=d, index = np.arange(n_trafo))
+    df.index.name = 'trafo'
     
     return df
 
@@ -766,6 +922,8 @@ def run_newton_raphson(system, enforce_q_limits = False):
                         delta_full[non_slack_idx] = delta_next #updating voltage angles on all busses except slack
                         vmag_full[pq_idx] = vmag_next #updating voltage magnitudes on non-slack and non-PV busses
                         
+                        (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
+                        
                         d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
                         df = pd.DataFrame(data=d, index = np.arange(n_buses))
                         df.index.name = 'bus'
@@ -847,6 +1005,8 @@ def run_newton_raphson(system, enforce_q_limits = False):
                 delta_full[non_slack_idx] = delta_next #updating voltage angles on all busses except slack
                 vmag_full[pq_idx] = vmag_next #updating voltage magnitudes on non-slack and non-PV busses
                 
+                (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
+                
                 d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
                 df = pd.DataFrame(data=d, index = np.arange(n_buses))
                 df.index.name = 'bus'
@@ -879,14 +1039,26 @@ def run_newton_raphson(system, enforce_q_limits = False):
 
     delta_res = df['delta_deg']
     delta_res = pd.Series.to_numpy(delta_res) * np.pi / 180
+    
+    p_res = df['p_pu']
+    p_res = pd.Series.to_numpy(p_res)
+    
+    q_res = df['q_pu']
+    q_res = pd.Series.to_numpy(q_res) 
 
     p_loss = calc_system_losses(system, vmag_res, delta_res)    
 
     line_flows = calc_line_flows(system, vmag_res, delta_res)
     
+    trafo_flows = calc_transformer_loadings(system, vmag_res, delta_res)
     
-    results = {'bus_results':df, 'line_flows':line_flows, 'total_losses_mw':p_loss*system.get('s_base'), 
-               'mismatches':y}
+    results = {'bus_results':df, 'line_flows':line_flows, 'transformer_flows':trafo_flows, 
+               'total_losses_mw':p_loss*system.get('s_base'), 'mismatches':y}
+    
+    print("\nWarnings:\n")
+    check_q_limits(system, q_res)
+    check_bus_voltage(system, vmag_res)
+    check_line_trafo_loading(system, results)
     
     return results   
 
@@ -952,6 +1124,8 @@ def run_newton_raphson_distributed(system, enforce_q_limits = False):
                         delta_full[non_ref_idx] = delta_next #updating voltage angles on all busses except reference
                         vmag_full[pq_idx] = vmag_next #updating voltage magnitudes on non-PV busses
                         k_g = k_g_next
+                        
+                        (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
                         
                         d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
                         df = pd.DataFrame(data=d, index = np.arange(n_buses))
@@ -1039,6 +1213,8 @@ def run_newton_raphson_distributed(system, enforce_q_limits = False):
                 vmag_full[pq_idx] = vmag_next #updating voltage magnitudes on non-PV busses
                 k_g = k_g_next
                 
+                (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
+                
                 d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
                 df = pd.DataFrame(data=d, index = np.arange(n_buses))
                 df.index.name = 'bus'
@@ -1071,10 +1247,18 @@ def run_newton_raphson_distributed(system, enforce_q_limits = False):
 
     delta_res = df['delta_deg']
     delta_res = pd.Series.to_numpy(delta_res) * np.pi / 180
+    
+    p_res = df['p_pu']
+    p_res = pd.Series.to_numpy(p_res)
+    
+    q_res = df['q_pu']
+    q_res = pd.Series.to_numpy(q_res) 
 
     p_loss = calc_system_losses(system, vmag_res, delta_res)    
 
     line_flows = calc_line_flows(system, vmag_res, delta_res)
+    
+    trafo_flows = calc_transformer_loadings(system, vmag_res, delta_res)
     
     slack_distribution_df = pd.DataFrame(data={'p_pu':slack_distribution(system, k_g).flatten()}, 
                                             index = np.arange(n_buses))
@@ -1097,10 +1281,13 @@ def run_newton_raphson_distributed(system, enforce_q_limits = False):
     print("\nSlack distribution across slack generators:\n")
     print(slack_distribution_df)
     
-    results = {'bus_results':df, 'line_flows':line_flows, 'total_losses_pu':p_loss, 
+    results = {'bus_results':df, 'line_flows':line_flows, 'total_losses_pu':p_loss, 'transformer_flows':trafo_flows,
                'mismatches':calc_mismatch_vecs(system, p, q), 'slack_distribution':slack_distribution_df}
-    
-    check_p_limits(system, p_full)
+    print("\nWarnings:\n")
+    check_p_limits(system, p_res)
+    check_q_limits(system, q_res)
+    check_bus_voltage(system, vmag_res)
+    check_line_trafo_loading(system, results)
     
     return results 
 
