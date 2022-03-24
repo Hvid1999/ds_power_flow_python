@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pandapower as pp
+import matplotlib.pyplot as plt
 
 def load_pandapower_case(network, enforce_q_limits=False, distributed_slack = False, 
                          slack_gens = np.array([]), participation_factors = np.array([])):
@@ -780,12 +781,13 @@ def load_participation_factors(system, p_factors = np.array([])):
     if np.size(p_factors) == 0: #standard case for no input
         participation_factors = np.ones(num_slack)
         participation_factors = participation_factors / num_slack
-    elif (np.size(p_factors) == num_slack) and (sum(p_factors) == 1.0):
+    elif (np.size(p_factors) == num_slack) and (round(sum(p_factors),3) == 1.0):
         #the size of the p-factor vector must be the number of slack generators
         #the sum of the p-factors must be 1
         participation_factors = p_factors
     else:
-        print('Error loading participation factors - check input. Set to equal factors (standard case).\n')
+        print('Error loading participation factors (sum = %f) - check input.' % sum(p_factors))
+        print('Set to equal factors (standard case).\n')
         participation_factors = np.ones(num_slack)
         participation_factors = participation_factors / num_slack
     
@@ -814,7 +816,7 @@ def slack_distribution(system, k_g):
             #k_g is a negative injection, but the absolute value is taken here
             #because the vector denotes how much each slack generator injects
             #to compensate for losses
-            slackvec[k] = p_fact * abs(k_g) 
+            slackvec[k] = p_fact * k_g
     
     return slackvec
 
@@ -843,18 +845,42 @@ def load_variation(system, load_indices, scalings):
         j += 1
         print("\nLoad at bus %i changed from %f to %f (real power)\nAnd %f to %f (reactive power)." % (loads.bus[i], p_old, p_new, q_old, q_new))
     
-    print("\nTotal variation in real power load: %f pu\n" % psi_load)
-    
-    #add the corresponding slack to each slack generator after load variation
-    for i in range(len(gens.index)):
-        if gens.slack[i]:
-            pset = gens.pset[i]
-            pset += gens.participation_factor[i] * psi_load
-            gens.pset[i] = pset
+    if system.get('distributed_slack'):
+        print("\nTotal change in real power load: %f pu" % psi_load)
+        print("Distribution across participating slack generators:")
+        slackvec = slack_distribution(system, psi_load)
+        slack_distribution_df = pd.DataFrame(data={'delta_p':slackvec.flatten()}, 
+                                                index = np.arange(system.get('n_buses')))
+
+        slack_distribution_df.index.name = 'bus'
+
+        slack_gen_indices = np.array([], dtype=int)
+
+        for i in range(len(gens.index)):
+            if gens.slack[i]:
+                slack_gen_indices = np.append(slack_gen_indices, gens.bus[i])
+
+        slack_distribution_df = slack_distribution_df.filter(items = slack_gen_indices, axis = 0)
+        
+        #Participation factors are defined bus-wise
+        #some test cases have multiple generators at a single bus
+        #the line below is a workaround to avoid showing multiple busses and too much slack
+        slack_distribution_df = slack_distribution_df.groupby(level=0).mean()
+        print(slack_distribution_df)
+        print('\n')
+        
+        #add the corresponding slack to each slack generator after load variation
+        for i in range(len(gens.index)):
+            if gens.slack[i]:
+                pset = gens.pset[i]
+                pset += gens.participation_factor[i] * psi_load
+                gens.pset[i] = pset
+        
+        system.update({'generators':gens})
+    else:
+        print("\nTotal variation in real power load: %f pu\n" % psi_load)
     
     system.update({'loads':loads})
-    system.update({'generators':gens})
-    
     
     return
 
@@ -1150,7 +1176,7 @@ def run_newton_raphson_distributed(system, enforce_q_limits = False):
 
                 jacobian_calc = jacobian_calc_simplify(system, jacobian)
                 
-                del_p = pset - (p - slack_distribution(system, k_g))
+                del_p = pset - (p + slack_distribution(system, k_g))
                 del_q = qset - q
 
 
@@ -1238,7 +1264,7 @@ def run_newton_raphson_distributed(system, enforce_q_limits = False):
 
             jacobian_calc = jacobian_calc_simplify(system, jacobian)
             
-            del_p = pset - (p - slack_distribution(system, k_g))
+            del_p = pset - (p + slack_distribution(system, k_g))
             del_q = qset - q  
     
     #Saving and exporting power flow results as dictionary
@@ -1260,7 +1286,7 @@ def run_newton_raphson_distributed(system, enforce_q_limits = False):
     
     trafo_flows = calc_transformer_loadings(system, vmag_res, delta_res)
     
-    slack_distribution_df = pd.DataFrame(data={'p_pu':slack_distribution(system, k_g).flatten()}, 
+    slack_distribution_df = pd.DataFrame(data={'p_pu':(-1)*slack_distribution(system, k_g).flatten()}, 
                                             index = np.arange(n_buses))
 
     slack_distribution_df.index.name = 'bus'
@@ -1278,11 +1304,13 @@ def run_newton_raphson_distributed(system, enforce_q_limits = False):
     #the line below is a workaround to avoid showing multiple busses and too much slack
     slack_distribution_df = slack_distribution_df.groupby(level=0).mean()
 
-    print("\nSlack distribution across slack generators:\n")
+    print("\nSlack (losses) distribution across slack generators:\n")
     print(slack_distribution_df)
     
     results = {'bus_results':df, 'line_flows':line_flows, 'total_losses_pu':p_loss, 'transformer_flows':trafo_flows,
                'mismatches':calc_mismatch_vecs(system, p, q), 'slack_distribution':slack_distribution_df}
+
+    
     print("\nWarnings:\n")
     check_p_limits(system, p_res)
     check_q_limits(system, q_res)
@@ -1303,7 +1331,63 @@ def run_power_flow(system, enforce_q_limits = False, distributed_slack = False):
     return results
 
 
+def plot_results(system, results):
+    
+    #Bus voltages
+    plt.figure()
+    plt.scatter(results.get('bus_results').index, results.get('bus_results')['vmag_pu'], marker="D", 
+                color='mediumblue',s=25)
+    plt.scatter(system.get('buses').index, system.get('buses')['max_vm_pu'], marker="_", color='tab:red',s=30)
+    plt.scatter(system.get('buses').index, system.get('buses')['min_vm_pu'], marker="_", color='tab:red',s=30)
+    plt.title('Results - Bus Voltage Magnitudes')
+    plt.ylabel('Magnitude [p.u.]')
+    plt.xlabel('Bus')
+    plt.xticks(range(0, system.get('n_buses'), 2))
+    plt.grid(linestyle='--', linewidth=0.5, alpha=0.65)
+    plt.margins(x=0.025)
+    plt.show()
+    
+    #Line loadings
+    plt.figure()
+    plt.scatter(results.get('line_flows').index, results.get('line_flows')['loading_percent'], marker="D", 
+                color='teal',s=25)
+    plt.scatter(results.get('line_flows').index, np.ones(len(results.get('line_flows').index))*100, marker="_", color='tab:red',s=30)
+    if  max(results.get('line_flows')['loading_percent']) > 100:
+        plt.ylim(0,max(results.get('line_flows')['loading_percent']) + 5)
+    else:
+        plt.ylim(0,110)
+    plt.title('Results - Line Loading')
+    plt.ylabel('Percentage')
+    plt.xlabel('Line')
+    plt.xticks(range(0, len(results.get('line_flows').index), 2))
+    plt.grid(linestyle='--', linewidth=0.5, alpha=0.65)
+    plt.margins(x=0.025)
+    plt.show()
 
+    #Transformer loadings
+    plt.figure()
+    plt.scatter(results.get('transformer_flows').index, results.get('transformer_flows')['loading_percent'], marker="D", 
+                color='darkgreen',s=25)
+    plt.scatter(results.get('transformer_flows').index, np.ones(len(results.get('transformer_flows').index))*100, marker="_", color='tab:red',s=60)
+    if  max(results.get('transformer_flows')['loading_percent']) > 100:
+        plt.ylim(0,max(results.get('transformer_flows')['loading_percent']) + 5)
+    else:
+        plt.ylim(0,110)
+    plt.title('Results - Transformer Loading')
+    plt.ylabel('Percentage')
+    plt.xlabel('Transformer')
+    plt.xticks(range(0, len(results.get('transformer_flows').index), 1))
+    plt.grid(linestyle='--', linewidth=0.5, alpha=0.65)
+    plt.margins(x=0.025)
+    plt.show()
+    
+    return
+
+def plot_result_comparison(system, results1, results2):
+    
+    #Plots differences for bus voltages, line loadings etc. between two result dictionaries
+    
+    return
 
 #=============================================================================
 
