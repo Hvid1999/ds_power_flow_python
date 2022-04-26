@@ -24,6 +24,13 @@ network = pf.new_england_39_new_voltages(nw.case39())
 #https://pandapower.readthedocs.io/en/v2.8.0/networks/power_system_test_cases.html
 #==============================================================================
 
+# Scaling line resistance to obtain more realistic system losses
+network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 3.5 #around 2%
+# network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 7.0
+
+# desc = "Low Losses"
+desc = "Medium Losses - Upscaled Line Resistance (Factor 3.5)"
+# desc = "High Losses - Upscaled Line Resistance (Factor 7.0)"
 
 enforce_q_limits = True
 distributed_slack = True
@@ -36,7 +43,7 @@ participation_factors = np.array([])
 #Contingency testing
 #network.load['in_service'][0] = False
 # network.line['in_service'][33] = False
-# network.line['in_service'][34] = False
+network.line['in_service'][0] = False
 # network.gen['in_service'][9] = False
 
 
@@ -63,4 +70,107 @@ results = pf.run_power_flow(system, enforce_q_limits=enforce_q_limits, distribut
 
 pf.plot_results(system, results)
 
+
+#%%
+#Evaluating line contingencies to find troublesome cases
+network = pf.new_england_39_new_voltages(nw.case39())
+
+invalid_lines_cases = []
+line = network.line
+
+for i in range(len(line.index)):
+    try:
+        network = pf.new_england_39_new_voltages(nw.case39())
+        network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 3.5 #around 2%
+        network.line['in_service'][i] = False
+        system = pf.load_pandapower_case(network, enforce_q_limits = True,
+                                                               distributed_slack = True, slack_gens = np.arange(0,10),
+                                                               participation_factors = np.array([]))[0]
+        pf.new_england_case_line_fix(system)
+        results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=True, print_results=False)
+        frombus = line.from_bus[i]
+        tobus = line.to_bus[i]
+        
+        pf.plot_results(system, results, name = ('Line %d\nBus %d to %d\nEqual participation' % (i, frombus, tobus)))
+    except:
+        invalid_lines_cases.append(i)
+            
+#%%
+#Evaluating load contingencies to find troublesome cases
+network = pf.new_england_39_new_voltages(nw.case39())
+ds = False
+if ds:
+    desc = 'Equal participation'
+else:
+    desc = 'Single slack'
+load = network.load
+for i in range(len(network.load.index)):
+    try:
+        network = pf.new_england_39_new_voltages(nw.case39())
+        network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 3.5 #around 2%
+        system = pf.load_pandapower_case(network, enforce_q_limits = True,
+                                                               distributed_slack = ds, 
+                                                               slack_gens = np.array([0,1,3,4,5,6,7,8,9]),
+                                                               participation_factors = np.array([]))[0]
+        pf.new_england_case_line_fix(system)
+        pf.load_variation(system, np.array([i]), scalings=np.ones(1)*0.0, const_pf=True)
+        results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=ds, print_results=False)
+        bus = load.bus[i]
+        pf.plot_results(system, results, name = ('Load %d\nBus %d\n%s' % (i, bus, desc)))
+    except:
+        1+1
+
+#%%
+#Evaluating generator contingencies to find troublesome cases
+network = pf.new_england_39_new_voltages(nw.case39())
+ds = True
+if ds:
+    desc = 'Equal participation'
+else:
+    desc = 'Single slack'
+gen = network.gen
+for i in range(9):
+    # try:
+    if i > 0:
+        slack_gens = np.delete(np.arange(0,10), i+1)
+    else: 
+        slack_gens = np.delete(np.arange(0,10), i)
+    bus = gen.bus[i]
+    network = pf.new_england_39_new_voltages(nw.case39())
+    network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 3.5 #around 2%
+    pf.panda_disable_bus(network, bus)
+    system = pf.load_pandapower_case(network, enforce_q_limits = True,
+                                                           distributed_slack = ds, 
+                                                           slack_gens = slack_gens,
+                                                           participation_factors = np.array([]))[0]
+    pf.new_england_case_line_fix(system)
+    results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=ds, print_results=False)
+    pf.plot_results(system, results, name = ('Bus %d\n%s' % (bus, desc)))
+    # except:
+        # 1+1            
+
+#%%
+#Evaluating bus contingencies to find troublesome cases
+network = pf.new_england_39_new_voltages(nw.case39())
+ds = True
+invalid_buses = []
+if ds:
+    desc = 'Equal participation'
+else:
+    desc = 'Single slack'
+gen = network.gen
+for i in range(0,29):
+    try:
+        network = pf.new_england_39_new_voltages(nw.case39())
+        network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 3.5 #around 2%
+        pf.panda_disable_bus(network, i)
+        system = pf.load_pandapower_case(network, enforce_q_limits = True,
+                                                               distributed_slack = ds, 
+                                                               slack_gens = np.array([0,1,3,4,5,6,7,8,9]),
+                                                               participation_factors = np.array([]))[0]
+        pf.new_england_case_line_fix(system)
+        results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=ds, print_results=False)
+        pf.plot_results(system, results, name = ('Bus %d\n%s' % (i, desc)))
+    except:
+        invalid_buses.append(i)          
 
