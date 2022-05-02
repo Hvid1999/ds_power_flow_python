@@ -194,7 +194,7 @@ def load_pandapower_case(network, enforce_q_limits=False, distributed_slack = Fa
     return (system, pandapower_results)
 
 
-def load_participation_factors(system, p_factors = np.array([])):
+def load_participation_factors_old(system, p_factors = np.array([])):
     #accepts an array of participation factors ordered by increasing generator bus indices
     #if no array is entered, slack is distributed evenly among generators participating in slack
     gens = system.get('generators')
@@ -240,6 +240,56 @@ def load_participation_factors(system, p_factors = np.array([])):
     system.update({'generators':gens})
     return
 
+def load_participation_factors(system, p_factors = np.array([])):
+    #accepts an array of participation factors ordered by increasing generator bus indices
+    #if no array is entered, slack is distributed evenly among generators participating in slack
+    gens = system.get('generators')
+    
+    num_gens = len(gens.index)
+    
+    if np.size(p_factors) == 0: #standard case for no input
+        participation_factors = np.ones(num_gens)
+        participation_factors = participation_factors / num_gens
+        
+    elif np.any(p_factors < 0):
+        print('Error loading participation factors - all values must be non-negative.')
+        print('Set to equal factors (standard case).\n')
+        participation_factors = np.ones(num_gens)
+        participation_factors = participation_factors / num_gens
+    
+    elif np.size(p_factors) != num_gens:
+        print('Error loading participation factors - array length not equal to number of generators.')
+        print('Set to equal factors (standard case).\n')
+        participation_factors = np.ones(num_gens)
+        participation_factors = participation_factors / num_gens
+            
+    elif round(sum(p_factors),3) != 1.0:
+        print('Error loading participation factors - sum (%f) not equal to 1.' % sum(p_factors))
+        print('Input array normalized.\n')
+        participation_factors = p_factors / np.sum(p_factors)
+    else:
+        #the size of the p-factor vector must be the number of controllable generators
+        #the sum of the p-factors must be 1
+        participation_factors = p_factors  
+        
+    
+    #Checking validity of participation factors against generator status and slack participation
+    for i in range(len(gens.index)):
+        if (not gens.in_service[i]) and (participation_factors[i] != 0.0):
+            print('Non-zero participation for inactive generator. Zero value enforced and array re-normalized.\n')
+            participation_factors[i] = 0.0
+            participation_factors = participation_factors / np.sum(participation_factors)
+        elif (not gens.slack[i]) and (participation_factors[i] != 0.0):
+            print('Non-zero participation for non-slack generator. Zero value enforced and array re-normalized.\n')
+            participation_factors[i] = 0.0
+            participation_factors = participation_factors / np.sum(participation_factors)
+                
+    for i in range(len(gens.index)):
+        gens.participation_factor[i] = participation_factors[i]
+    
+    
+    system.update({'generators':gens})
+    return
 
 def set_reference_bus_power(system, pset):
     if not system.get('distributed_slack'):
@@ -655,9 +705,9 @@ def calc_jacobian(system, vmag, delta, g, b, p, q):
         gens = system.get('generators')
         
         for i in range(len(gens.index)):
-            if gens.slack[i]:
-                k = gens.bus[i]
-                part_facts[k] = gens.participation_factor[i]
+            # if gens.slack[i]:
+            #     k = gens.bus[i]
+            part_facts[i] = gens.participation_factor[i]
         
         jacobian = np.append(jacobian, part_facts, axis = 1)
     
@@ -1984,7 +2034,7 @@ def line_loading_metric(results_list):
         
         #computing the metric for line l
         for l in range(np.size(phi_lines)):
-            phi_lines[l] += (line_flows['loading_percent'][l] / 100) ** 5
+            phi_lines[l] += (line_flows['loading_percent'][l] / 100) ** 10
         
         #averaging across all results/contingencies
         if j == len(results_list):
