@@ -138,7 +138,7 @@ for i in range(9):
         slack_gens = np.delete(np.arange(0,10), i)
     bus = gen.bus[i]
     network = pf.new_england_39_new_voltages(nw.case39())
-    network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 3.5 #around 2%
+    network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 5.0 #around 3%
     pf.panda_disable_bus(network, bus)
     system = pf.load_pandapower_case(network, enforce_q_limits = True,
                                                            distributed_slack = ds, 

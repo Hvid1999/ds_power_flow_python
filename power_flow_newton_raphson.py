@@ -23,7 +23,7 @@ def load_pandapower_case(network, enforce_q_limits=False, distributed_slack = Fa
     freq = network.f_hz
 
     #run PandaPower power flow
-    pp.runpp(network, enforce_q_lims = enforce_q_limits, trafo_model='pi', trafo_loading='power')
+    pp.runpp(network, enforce_q_lims = enforce_q_limits, trafo_model='pi', trafo_loading='power', max_iteration=25)
     #Saving PandaPower results and per-unitizing power values
     pandapower_results = network.res_bus
     pandapower_results['p_pu'] = pandapower_results.p_mw/baseMVA
@@ -167,12 +167,15 @@ def load_pandapower_case(network, enforce_q_limits=False, distributed_slack = Fa
         gens['slack'] = True #if no specific slack generators are entered, every generator participates
         gens['participation_factor'] = 0.0
         
-        if np.size(slack_gens) != 0: 
-            for i in range(len((gens.index))):
+         
+        for i in range(len((gens.index))):
+            if np.size(slack_gens) != 0:
                 if i in slack_gens:
                     gens.slack[i] = True
                 else: 
                     gens.slack[i] = False
+            if not gens.in_service[i]:
+                gens.slack[i] = False
                     
         system.update({'generators':gens})
         
@@ -193,52 +196,6 @@ def load_pandapower_case(network, enforce_q_limits=False, distributed_slack = Fa
 
     return (system, pandapower_results)
 
-
-def load_participation_factors_old(system, p_factors = np.array([])):
-    #accepts an array of participation factors ordered by increasing generator bus indices
-    #if no array is entered, slack is distributed evenly among generators participating in slack
-    gens = system.get('generators')
-    
-    slack_gens = gens[gens.slack & gens.in_service] 
-    
-    num_slack = len(slack_gens.index)
-    
-    if np.size(p_factors) == 0: #standard case for no input
-        participation_factors = np.ones(num_slack)
-        participation_factors = participation_factors / num_slack
-        
-    elif np.any(p_factors < 0):
-        print('Error loading participation factors - all values must be positive.' % sum(p_factors))
-        print('Set to equal factors (standard case).\n')
-        participation_factors = np.ones(num_slack)
-        participation_factors = participation_factors / num_slack
-    
-    elif np.size(p_factors) != num_slack:
-        print('Error loading participation factors - array longer than amount of slack generators.')
-        print('Set to equal factors (standard case).\n')
-        participation_factors = np.ones(num_slack)
-        participation_factors = participation_factors / num_slack
-            
-    elif round(sum(p_factors),3) != 1.0:
-        print('Error loading participation factors - sum (%f) not equal to 1.' % sum(p_factors))
-        print('Input array normalized.\n')
-        participation_factors = p_factors / np.sum(p_factors)
-    else:
-        #the size of the p-factor vector must be the number of slack generators
-        #the sum of the p-factors must be 1
-        participation_factors = p_factors    
-    j = 0
-    
-    for i in range(len(gens.index)):
-        if gens.slack[i]:
-            if gens.in_service[i]:
-                gens.participation_factor[i] = participation_factors[j]
-                j += 1
-            else:
-                gens.participation_factor[i] = 0.0 #if the generator is disabled
-                
-    system.update({'generators':gens})
-    return
 
 def load_participation_factors(system, p_factors = np.array([])):
     #accepts an array of participation factors ordered by increasing generator bus indices
@@ -270,7 +227,7 @@ def load_participation_factors(system, p_factors = np.array([])):
     else:
         #the size of the p-factor vector must be the number of controllable generators
         #the sum of the p-factors must be 1
-        participation_factors = p_factors  
+        participation_factors = p_factors.copy()
         
     
     #Checking validity of participation factors against generator status and slack participation
@@ -1330,12 +1287,12 @@ def run_newton_raphson_distributed(system, enforce_q_limits, print_results):
     trafo_flows = calc_transformer_loadings(system, df)
     
     #Calculating slack distribution and accounting for inactive buses
-    slack_gen_indices = np.array([], dtype=int)
+    active_gen_indices = np.array([], dtype=int)
 
     gens = system.get('generators')
     for i in range(len(gens.index)):
-        if gens.slack[i]:
-            slack_gen_indices = np.append(slack_gen_indices, gens.index[i])
+        if gens.in_service[i]:
+            active_gen_indices = np.append(active_gen_indices, gens.index[i])
 
     indices = np.arange(system.get('n_buses'))
 
@@ -1351,8 +1308,8 @@ def run_newton_raphson_distributed(system, enforce_q_limits, print_results):
 
     slack_distribution_df.index.name = 'bus'
 
-    slack_distribution_df = slack_distribution_df.filter(items = gens['bus'].to_numpy()[slack_gen_indices], axis = 0)
-    slack_distribution_df['\u03C0'] = gens['participation_factor'].to_numpy()[slack_gen_indices]
+    slack_distribution_df = slack_distribution_df.filter(items = gens['bus'].to_numpy()[active_gen_indices], axis = 0)
+    slack_distribution_df['\u03C0'] = gens['participation_factor'].to_numpy()[active_gen_indices]
     
     #Participation factors are defined bus-wise
     #some test cases have multiple generators at a single bus (in case of static gens)
@@ -1714,92 +1671,112 @@ def slack_distribution(system, k_g):
 # Functions for plotting results: Bus voltages, line/trafo loadings
 
 
-def plot_results(system, results, angle=False ,name='', save_directory=''):
+def plot_results(system, results, angle=False ,name='', save_directory='', singleplot=''):
     #Note: need small changes if the system does not have transformers 
     #or if the system has different bus voltage limits for each bus
     
-    
-    if angle:
-        gs = gsp.GridSpec(3, 2)
+    if singleplot == 'lines':
+        fig = plt.figure(dpi=200)
+        fig.set_figheight(11)
+        fig.set_figwidth(11)
+        plt.bar(results.get('line_flows').index, results.get('line_flows')['loading_percent'], 
+                    color='teal')
+        # plt.scatter(results.get('line_flows').index, np.ones(len(results.get('line_flows').index))*100, marker="_", color='tab:red',s=30)
+        plt.axhline(y=100, color='tab:red', linestyle='--')
+        if  max(results.get('line_flows')['loading_percent']) > 100:
+            plt.ylim(0,max(results.get('line_flows')['loading_percent']) + 5)
+        else:
+            plt.ylim(0,110)
+        plt.title('Line Loading')
+        plt.ylabel('Percentage')
+        plt.xlabel('Line')
+        plt.xticks(range(0, len(results.get('line_flows').index), 2))
+        plt.grid(linestyle='--', linewidth=0.5, alpha=0.65)
+        plt.margins(x=0.025)
+        if name != '':
+            plt.title('%s\n\n' % name, fontweight='bold', fontsize=14)
     else:
-        gs = gsp.GridSpec(2, 2)
-    fig = plt.figure(dpi=200)
-    fig.set_figheight(11)
-    fig.set_figwidth(11)
-    if name != '':
-        plt.title('%s\n\n' % name, fontweight='bold', fontsize=14)
-        ax = plt.gca()
-        ax.get_xaxis().set_visible(False)
-        ax.get_yaxis().set_visible(False)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['bottom'].set_visible(False)
-        ax.spines['left'].set_visible(False)
+        if angle:
+            gs = gsp.GridSpec(3, 2)
+        else:
+            gs = gsp.GridSpec(2, 2)
+        fig = plt.figure(dpi=200)
+        fig.set_figheight(11)
+        fig.set_figwidth(11)
+        if name != '':
+            plt.title('%s\n\n' % name, fontweight='bold', fontsize=14)
+            ax = plt.gca()
+            ax.get_xaxis().set_visible(False)
+            ax.get_yaxis().set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['bottom'].set_visible(False)
+            ax.spines['left'].set_visible(False)
+            
+        ax1 = fig.add_subplot(gs[0, :]) # row 0, col 0
+        ax1.scatter(results.get('bus_results').index, results.get('bus_results')['vmag_pu'], marker="D", 
+                    color='darkblue',s=25)
+        # ax1.scatter(system.get('buses').index, system.get('buses')['max_vm_pu'], marker="_", color='tab:red',s=30)
+        # ax1.scatter(system.get('buses').index, system.get('buses')['min_vm_pu'], marker="_", color='tab:red',s=30)
+        ax1.axhline(y=system.get('buses')['max_vm_pu'][0], color='tab:red', linestyle='--')
+        ax1.axhline(y=system.get('buses')['min_vm_pu'][0], color='tab:red', linestyle='--')
+        ax1.title.set_text('Bus Voltage')
+        ax1.set_ylabel('Magnitude [p.u.]')
+        ax1.set_xlabel('Bus')
+        ax1.set_xticks(range(0, len(results.get('bus_results').index), 2))
+        ax1.grid(linestyle='--', linewidth=0.5, alpha=0.65)
+        ax1.margins(x=0.025)
         
-    ax1 = fig.add_subplot(gs[0, :]) # row 0, col 0
-    ax1.scatter(results.get('bus_results').index, results.get('bus_results')['vmag_pu'], marker="D", 
-                color='darkblue',s=25)
-    # ax1.scatter(system.get('buses').index, system.get('buses')['max_vm_pu'], marker="_", color='tab:red',s=30)
-    # ax1.scatter(system.get('buses').index, system.get('buses')['min_vm_pu'], marker="_", color='tab:red',s=30)
-    ax1.axhline(y=system.get('buses')['max_vm_pu'][0], color='tab:red', linestyle='--')
-    ax1.axhline(y=system.get('buses')['min_vm_pu'][0], color='tab:red', linestyle='--')
-    ax1.title.set_text('Bus Voltage')
-    ax1.set_ylabel('Magnitude [p.u.]')
-    ax1.set_xlabel('Bus')
-    ax1.set_xticks(range(0, len(results.get('bus_results').index), 2))
-    ax1.grid(linestyle='--', linewidth=0.5, alpha=0.65)
-    ax1.margins(x=0.025)
-    
-    if angle:
-        ax2 = fig.add_subplot(gs[2, 0])
-    else:
-        ax2 = fig.add_subplot(gs[1, 0])
-    ax2.bar(results.get('line_flows').index, results.get('line_flows')['loading_percent'], 
-                color='teal')
-    # plt.scatter(results.get('line_flows').index, np.ones(len(results.get('line_flows').index))*100, marker="_", color='tab:red',s=30)
-    ax2.axhline(y=100, color='tab:red', linestyle='--')
-    if  max(results.get('line_flows')['loading_percent']) > 100:
-        ax2.set_ylim(0,max(results.get('line_flows')['loading_percent']) + 5)
-    else:
-        ax2.set_ylim(0,110)
-    ax2.title.set_text('Line Loading')
-    ax2.set_ylabel('Percentage')
-    ax2.set_xlabel('Line')
-    ax2.set_xticks(range(0, len(results.get('line_flows').index), 2))
-    ax2.grid(linestyle='--', linewidth=0.5, alpha=0.65)
-    ax2.margins(x=0.025)
-    
-    if angle:
-        ax3 = fig.add_subplot(gs[2,1])
-    else:
-        ax3 = fig.add_subplot(gs[1,1])
-    ax3.bar(results.get('transformer_flows').index, results.get('transformer_flows')['loading_percent'], 
-                color='darkgreen')
-    # plt.scatter(results.get('transformer_flows').index, np.ones(len(results.get('transformer_flows').index))*100, marker="_", color='tab:red',s=60)
-    ax3.axhline(y=100, color='tab:red', linestyle='--')
-    if  max(results.get('transformer_flows')['loading_percent']) > 100:
-        ax3.set_ylim(0,max(results.get('transformer_flows')['loading_percent']) + 5)
-    else:
-        ax3.set_ylim(0,110)
-    ax3.title.set_text('Transformer Loading')
-    ax3.set_ylabel('Percentage')
-    ax3.set_xlabel('Transformer')
-    ax3.set_xticks(range(0, len(results.get('transformer_flows').index), 1))
-    ax3.grid(linestyle='--', linewidth=0.5, alpha=0.65)
-    ax3.margins(x=0.025)
-    
-    if angle:
-        ax4 = fig.add_subplot(gs[1,:])
-        ax4.bar(results.get('bus_results').index, results.get('bus_results')['delta_deg'], 
-                    color='darkslateblue')
-        ax4.axhline(y=0, color='darkslategray', linestyle='-')
-        ax4.set_ylabel('Phase Angle [Deg.]')
-        ax4.set_xlabel('Bus')
-        ax4.set_xticks(range(0, len(results.get('bus_results').index), 2))
-        ax4.grid(linestyle='--', linewidth=0.5, alpha=0.65)
-        ax4.margins(x=0.025)
-        ax4.set_ylim(-(max(abs(results.get('bus_results')['delta_deg']))+1), 
-                     max(abs(results.get('bus_results')['delta_deg']))+1)
+        if angle:
+            ax2 = fig.add_subplot(gs[2, 0])
+        else:
+            ax2 = fig.add_subplot(gs[1, 0])
+        ax2.bar(results.get('line_flows').index, results.get('line_flows')['loading_percent'], 
+                    color='teal')
+        # plt.scatter(results.get('line_flows').index, np.ones(len(results.get('line_flows').index))*100, marker="_", color='tab:red',s=30)
+        ax2.axhline(y=100, color='tab:red', linestyle='--')
+        if  max(results.get('line_flows')['loading_percent']) > 100:
+            ax2.set_ylim(0,max(results.get('line_flows')['loading_percent']) + 5)
+        else:
+            ax2.set_ylim(0,110)
+        ax2.title.set_text('Line Loading')
+        ax2.set_ylabel('Percentage')
+        ax2.set_xlabel('Line')
+        ax2.set_xticks(range(0, len(results.get('line_flows').index), 2))
+        ax2.grid(linestyle='--', linewidth=0.5, alpha=0.65)
+        ax2.margins(x=0.025)
+        
+        if angle:
+            ax3 = fig.add_subplot(gs[2,1])
+        else:
+            ax3 = fig.add_subplot(gs[1,1])
+        ax3.bar(results.get('transformer_flows').index, results.get('transformer_flows')['loading_percent'], 
+                    color='darkgreen')
+        # plt.scatter(results.get('transformer_flows').index, np.ones(len(results.get('transformer_flows').index))*100, marker="_", color='tab:red',s=60)
+        ax3.axhline(y=100, color='tab:red', linestyle='--')
+        if  max(results.get('transformer_flows')['loading_percent']) > 100:
+            ax3.set_ylim(0,max(results.get('transformer_flows')['loading_percent']) + 5)
+        else:
+            ax3.set_ylim(0,110)
+        ax3.title.set_text('Transformer Loading')
+        ax3.set_ylabel('Percentage')
+        ax3.set_xlabel('Transformer')
+        ax3.set_xticks(range(0, len(results.get('transformer_flows').index), 1))
+        ax3.grid(linestyle='--', linewidth=0.5, alpha=0.65)
+        ax3.margins(x=0.025)
+        
+        if angle:
+            ax4 = fig.add_subplot(gs[1,:])
+            ax4.bar(results.get('bus_results').index, results.get('bus_results')['delta_deg'], 
+                        color='darkslateblue')
+            ax4.axhline(y=0, color='darkslategray', linestyle='-')
+            ax4.set_ylabel('Phase Angle [Deg.]')
+            ax4.set_xlabel('Bus')
+            ax4.set_xticks(range(0, len(results.get('bus_results').index), 2))
+            ax4.grid(linestyle='--', linewidth=0.5, alpha=0.65)
+            ax4.margins(x=0.025)
+            ax4.set_ylim(-(max(abs(results.get('bus_results')['delta_deg']))+1), 
+                         max(abs(results.get('bus_results')['delta_deg']))+1)
     
     if save_directory != '':
         fig.savefig(save_directory)
@@ -2023,7 +2000,7 @@ def panda_disable_bus(network, bus_idx):
     return
 
 
-def line_loading_metric(results_list):
+def line_loading_metric_old(results_list):
     #array of zeros of length equal to amount of lines, 
     #assuming that all results are from the same system
     phi_lines = np.zeros(len(results_list[0].get('line_flows').index))
@@ -2040,6 +2017,22 @@ def line_loading_metric(results_list):
         if j == len(results_list):
             phi_lines = phi_lines / j
     
+    phi = np.sum(phi_lines) / np.size(phi_lines)
+    
+    return phi
+
+def line_loading_metric(results):
+    #array of zeros of length equal to amount of lines
+    phi_lines = np.zeros(len(results.get('line_flows').index))
+    
+    line_flows = results.get('line_flows').copy()
+    
+    #computing the metric for line l
+    #raised to the power of 10 to strongly penalize lines close to 100% loading
+    for l in range(np.size(phi_lines)):
+        phi_lines[l] += (line_flows['loading_percent'][l] / 100) ** 10
+    
+    #averaging over all lines
     phi = np.sum(phi_lines) / np.size(phi_lines)
     
     return phi
