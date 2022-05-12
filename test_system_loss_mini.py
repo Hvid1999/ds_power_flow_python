@@ -1,4 +1,4 @@
-import power_flow_newton_raphson as pf
+import ds_power_flow as pf
 import pandapower.networks as nw
 import numpy as np
 import pandas as pd
@@ -8,8 +8,6 @@ pd.options.display.float_format = '{:.6f}'.format #avoid scientific notation whe
 #system tweaks
 network = pf.new_england_39_new_voltages(nw.case39())
 network.gen['vm_pu'][5] = 1.058
-# network.load['q_mvar'][14] += 130 #simulating 130 MVAR shunt compensation at bus with consistent overvoltage for higher losses
-
 
 # Scaling line resistance to obtain more realistic system losses
 network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 5.0 #around 3%
@@ -23,7 +21,7 @@ desc = "Medium Losses - Upscaled Line Resistance (Factor 5.0)"
 #Bus 39 represents interconnection to an aggregated New York system.
 #The generator is therefore modelled with a very high inertia constant.
 
-#%%
+
 
 slack_gens = np.arange(0,10)
 # slack_gens = np.array([0,1,3,4,5,6,7,8,9])
@@ -41,7 +39,7 @@ system = pf.load_pandapower_case(network, enforce_q_limits = True, distributed_s
 pf.new_england_case_line_fix(system)
 
 
-system.update({'tolerance':1e-6})
+system.update({'tolerance':1e-3})
 system.update({'iteration_limit':25})
 
 
@@ -52,7 +50,7 @@ pf.new_england_case_line_fix(system_base)
 gens_base = system_base.get('generators').copy()
 
 
-#%%
+
 gradient = np.ones(np.size(participation_factors))
 epsilon = 1e-5
 pf_count = 0
@@ -89,7 +87,7 @@ while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
         print('\n%d...\n' % pf_count)
     
     if step_count == 0:
-        gamma = 0.02 / np.linalg.norm(gradient)
+        gamma = 0.02 / np.max(gradient)
         phi_initial = phi
     else:
         #Barzilai-Borwein method for step size determination - Wikipedia
@@ -117,11 +115,12 @@ while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
     system.update({'generators':gens_base.copy()})
     pf.load_participation_factors(system, participation_factors)
 
-print('\nFinished.\n')
+print('\nFinished.\nParticipation Factors:')
+print(participation_factors)
 
 
 
-results_base = pf.run_power_flow(system_base, enforce_q_limits=True, distributed_slack=True, print_results=True)
+results_base = pf.run_power_flow(system_base, enforce_q_limits=True, distributed_slack=True, print_results=False)
 phi_base = results_base.get('total_losses_pu')
 pf.plot_results(system_base, results_base, angle = True, name = ('Equal Factors - Losses: %f\n%s' % (phi_base,desc)))
 pf.plot_results(system, results, angle = True, name = ('After Gradient Steps - Losses: %f\n%s' % (phi,desc)))
@@ -145,7 +144,9 @@ results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=Tru
 equal_factors_loss = results.get('total_losses_pu')
 min_loss = equal_factors_loss
 
-for n in range(1,200):  
+num_attempts = 300
+
+for n in range(1,num_attempts):  
     print(n)
     participation_factors = np.random.random(10)
     participation_factors = participation_factors / np.sum(participation_factors)
@@ -155,4 +156,6 @@ for n in range(1,200):
     if results.get('total_losses_pu') < min_loss:
         min_loss = results.get('total_losses_pu')
         best_factors = np.copy(participation_factors)
-pf.plot_results(system, results, angle = True, name = ('After Randomized Search - Losses: %f\n%s' % (min_loss,desc)))
+print('\nFinished.\nParticipation Factors:')
+print(best_factors)
+pf.plot_results(system, results, angle = True, name = ('After Randomized Search (n = %d) - Losses: %f\n%s' % (num_attempts,min_loss,desc)))

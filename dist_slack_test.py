@@ -1,4 +1,4 @@
-import power_flow_newton_raphson as pf
+import ds_power_flow as pf
 import pandapower.networks as nw
 import numpy as np
 import pandas as pd
@@ -19,10 +19,10 @@ pd.options.display.float_format = '{:.6f}'.format #avoid scientific notation whe
 
 network = pf.new_england_39_new_voltages(nw.case39())
 
-
 #Cases source: 
 #https://pandapower.readthedocs.io/en/v2.8.0/networks/power_system_test_cases.html
 #==============================================================================
+
 
 # Scaling line resistance to obtain more realistic system losses
 network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 3.5 #around 2%
@@ -34,16 +34,16 @@ desc = "Medium Losses - Upscaled Line Resistance (Factor 3.5)"
 
 enforce_q_limits = True
 distributed_slack = True
-#slack_gens = np.array([0,1,2,3,5,6,7,8,9]) #generator list indices (generators 0, 1 .. G)
+# slack_gens = np.array([0,1,2,3,5,6,7,8,9]) #generator list indices (generators 0, 1 .. G)
 #participation_factors = np.array([0.7, 0.01, 0.07, 0.02, 0.03, 0.02, 0.02, 0.03, 0.1]) 
-slack_gens = np.array([0,1,2,3,4])
-participation_factors = np.array([1,2,3,4,5,6,7,8,9,10])
+slack_gens = np.array([0,1,2,3,4,5,6,7,8,9])
+participation_factors = np.array([])
 
 
 #Contingency testing
 #network.load['in_service'][0] = False
 # network.line['in_service'][33] = False
-network.line['in_service'][0] = False
+# network.line['in_service'][0] = False
 # network.gen['in_service'][9] = False
 
 
@@ -52,15 +52,12 @@ network.line['in_service'][0] = False
                                                        distributed_slack = distributed_slack, slack_gens = slack_gens,
                                                        participation_factors = participation_factors)
 
-
 #Important: If the New England 39 Bus system is loaded, uncomment the code below to fix 
 #           the transformer (bus 22 to 35) loaded as a line.
 #Also, all busses are set as 345 kV, which is slightly inaccurate, but it shouldn't make much of a 
 #difference. Maybe worth testing.
 
 pf.new_england_case_line_fix(system)
-
-
 
 
 #Vary load at the stated indices in the loads list of dictionaries
@@ -131,18 +128,13 @@ else:
     desc = 'Single slack'
 gen = network.gen
 for i in range(9):
-    # try:
-    if i > 0:
-        slack_gens = np.delete(np.arange(0,10), i+1)
-    else: 
-        slack_gens = np.delete(np.arange(0,10), i)
     bus = gen.bus[i]
     network = pf.new_england_39_new_voltages(nw.case39())
-    network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 5.0 #around 3%
+    network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 3.5 #around 2%
     pf.panda_disable_bus(network, bus)
     system = pf.load_pandapower_case(network, enforce_q_limits = True,
                                                            distributed_slack = ds, 
-                                                           slack_gens = slack_gens,
+                                                           slack_gens = np.array([]),
                                                            participation_factors = np.array([]))[0]
     pf.new_england_case_line_fix(system)
     results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=ds, print_results=False)
@@ -167,7 +159,7 @@ for i in range(0,29):
         pf.panda_disable_bus(network, i)
         system = pf.load_pandapower_case(network, enforce_q_limits = True,
                                                                distributed_slack = ds, 
-                                                               slack_gens = np.array([0,1,3,4,5,6,7,8,9]),
+                                                               slack_gens = np.array([]),
                                                                participation_factors = np.array([]))[0]
         pf.new_england_case_line_fix(system)
         results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=ds, print_results=False)

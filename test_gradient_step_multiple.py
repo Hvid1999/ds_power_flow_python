@@ -1,4 +1,4 @@
-import power_flow_newton_raphson as pf
+import ds_power_flow as pf
 import pandapower.networks as nw
 import numpy as np
 import pandas as pd
@@ -89,18 +89,41 @@ base_systems.append(pf.load_pandapower_case(net, enforce_q_limits = True, distri
                                     ref_bus_pset = ref_bus_pset)[0])
 
 #=============================================================================
+#Contingency 4 - loss of generator bus 
+net = pf.new_england_39_new_voltages(nw.case39())
+net.gen['vm_pu'][5] = 1.058
+net.line['r_ohm_per_km'] = net.line['r_ohm_per_km'] * 3.5 #around 2%
+# net.line['r_ohm_per_km'] = net.line['r_ohm_per_km'] * 5.0 #around 3%
+
+pf.panda_disable_bus(net, 37)
+
+
+systems.append(pf.load_pandapower_case(net, enforce_q_limits = True, distributed_slack = True, 
+                                    slack_gens = slack_gens, participation_factors = participation_factors,
+                                    ref_bus_pset = ref_bus_pset)[0])
+base_systems.append(pf.load_pandapower_case(net, enforce_q_limits = True, distributed_slack = True, 
+                                    slack_gens = slack_gens, participation_factors = participation_factors,
+                                    ref_bus_pset = ref_bus_pset)[0])
+
+#=============================================================================
 
 for system in systems:
     pf.new_england_case_line_fix(system)
-
+    gens = system.get('generators').copy()
+    for i in range(len(gens.index)):
+        gens['pmax'][i] += 0.75  #increasing generator max real power for the sake of testing
+    system.update({'generators':gens.copy()})
     system.update({'tolerance':1e-3})
     system.update({'iteration_limit':35})
 
 
 for system in base_systems:
     pf.new_england_case_line_fix(system)
-    base_gens.append(system.get('generators').copy())
-
+    gens = system.get('generators').copy()
+    for i in range(len(gens.index)):
+        gens['pmax'][i] += 0.75  #increasing generator max real power for the sake of testing
+    system.update({'generators':gens.copy()})
+    base_gens.append(gens.copy())
 
 
 gradient = np.ones(np.size(participation_factors))
@@ -109,6 +132,8 @@ pf_count = 0
 step_count = 0
 gradient_old = np.copy(gradient)
 p_fact_old = np.copy(participation_factors)
+
+
 
 while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
     results = []
@@ -121,7 +146,8 @@ while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
     
     phi = 0
     for result in results:
-        phi += 0.975*pf.line_loading_metric(result) + 0.025*result.get('total_losses_pu') #combining metrics
+        # phi += 0.975*pf.line_loading_metric(result) + 0.025*result.get('total_losses_pu') #combining metrics
+        phi += 0.94*pf.line_loading_metric(result) + 0.06*pf.generator_limit_metric(systems[0], result) #combining metrics
         # phi += pf.line_loading_metric(result)
     phi = phi / len(results) #average metric over each contingency
     
@@ -149,8 +175,9 @@ while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
         ignore = 0
         for i in range(len(results)):
             # phi_pk[k] += pf.line_loading_metric(results[i])
-            phi_pk[k] += 0.975*pf.line_loading_metric(results[i]) + 0.025*results[i].get('total_losses_pu') #combining metrics
-            
+            # phi_pk[k] += 0.975*pf.line_loading_metric(results[i]) + 0.025*results[i].get('total_losses_pu') #combining metrics
+            phi_pk[k] += 0.94*pf.line_loading_metric(results[i]) + 0.06*pf.generator_limit_metric(systems[0], results[i]) #combining metrics
+
         phi_pk[k] = phi_pk[k] / (len(results) - ignore) #averaging metric across contingencies
         
         gradient[k] = (phi_pk[k] - phi) / epsilon
@@ -186,22 +213,27 @@ while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
     
     # system.update({'generators':gens_base.copy()})
 
-print('\nFinished.\n')
+print('\nFinished.\nParticipation Factors:')
+print(participation_factors)
 
 
 for system in base_systems:
     base_results.append(pf.run_power_flow(system, enforce_q_limits=True, 
-                                          distributed_slack=True, print_results=True))
+                                          distributed_slack=True, print_results=False))
 
 
-pf.plot_results(base_systems[0], base_results[0], angle = True, singleplot = 'lines', name = ('Losing Load 20 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[0].get('total_losses_pu'))))
-pf.plot_results(systems[0], results[0], angle = True, singleplot = 'lines', name = ('Losing Load 20 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[0].get('total_losses_pu'))))
+pf.plot_results(base_systems[0], base_results[0], angle = True, plot = 'lg', name = ('Losing Load 20 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[0].get('total_losses_pu'))))
+pf.plot_results(systems[0], results[0], angle = True, plot = 'lg', name = ('Losing Load 20 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[0].get('total_losses_pu'))))
 
-pf.plot_results(base_systems[1], base_results[1], angle = True, singleplot = 'lines', name = ('Losing Bus 31 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[1].get('total_losses_pu'))))
-pf.plot_results(systems[1], results[1], angle = True, singleplot = 'lines', name = ('Losing Bus 31 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[1].get('total_losses_pu'))))
+pf.plot_results(base_systems[1], base_results[1], angle = True, plot = 'lg', name = ('Losing Bus 31 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[1].get('total_losses_pu'))))
+pf.plot_results(systems[1], results[1], angle = True, plot = 'lg', name = ('Losing Bus 31 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[1].get('total_losses_pu'))))
 
-pf.plot_results(base_systems[2], base_results[2], angle = True, singleplot = 'lines', name = ('Losing Bus 34 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[2].get('total_losses_pu'))))
-pf.plot_results(systems[2], results[2], angle = True, singleplot = 'lines', name = ('Losing Bus 34 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[2].get('total_losses_pu'))))
+pf.plot_results(base_systems[2], base_results[2], angle = True, plot = 'lg', name = ('Losing Bus 34 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[2].get('total_losses_pu'))))
+pf.plot_results(systems[2], results[2], angle = True, plot = 'lg', name = ('Losing Bus 34 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[2].get('total_losses_pu'))))
+
+pf.plot_results(base_systems[3], base_results[3], angle = True, plot = 'lg', name = ('Losing Bus 37 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[2].get('total_losses_pu'))))
+pf.plot_results(systems[3], results[3], angle = True, plot = 'lg', name = ('Losing Bus 37 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[2].get('total_losses_pu'))))
+
 
 # print("\nWarnings:\n")
 # pf.check_p_limits(system, results)

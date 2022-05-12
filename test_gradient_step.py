@@ -1,4 +1,4 @@
-import power_flow_newton_raphson as pf
+import ds_power_flow as pf
 import pandapower.networks as nw
 import numpy as np
 import pandas as pd
@@ -11,11 +11,13 @@ network.gen['vm_pu'][5] = 1.058
 # network.load['q_mvar'][14] += 130 #simulating 130 MVAR shunt compensation at bus with consistent overvoltage for higher losses
 
 #Contingency
-pf.panda_disable_bus(network, 31)
+inactive_bus = 37
+# pf.panda_disable_bus(network, inactive_bus)
+pf.panda_disable_bus(network, inactive_bus)
 
 
 # Scaling line resistance to obtain more realistic system losses
-network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 5.0 #around 3%
+network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 4.8 #around 3%
 # network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 7.0
 
 # desc = "Low Losses"
@@ -28,7 +30,7 @@ desc = "Medium Losses - Upscaled Line Resistance (Factor 5.0)"
 
 
 # slack_gens = np.arange(0,10)
-slack_gens = np.array([0,1,3,4,5,6,7,8,9])
+slack_gens = np.array([])
 # participation_factors = np.array([])
 ref_bus_pset = 0 #undefined
 
@@ -44,7 +46,7 @@ system = pf.load_pandapower_case(network, enforce_q_limits = True, distributed_s
 pf.new_england_case_line_fix(system)
 
 
-system.update({'tolerance':1e-6})
+system.update({'tolerance':1e-3})
 system.update({'iteration_limit':35})
 
 system_base = pf.load_pandapower_case(network, enforce_q_limits = True, distributed_slack = True, 
@@ -53,20 +55,31 @@ system_base = pf.load_pandapower_case(network, enforce_q_limits = True, distribu
 pf.new_england_case_line_fix(system_base)
 gens_base = system_base.get('generators').copy()
 
+for i in range(len(gens_base.index)):
+    gens_base['pmax'][i] += 0.75  #increasing generator max real power for the sake of testing
+system.update({'generators':gens_base})
+system_base.update({'generators':gens_base})
+
+
 gradient = np.ones(np.size(participation_factors))
 epsilon = 1e-5
 pf_count = 0
 step_count = 0
+step_count_limit = 20
 gradient_old = np.copy(gradient)
 p_fact_old = np.copy(participation_factors)
+gamma_list = []
+gamma_stab_list = []
 
 
-while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
+while (step_count < step_count_limit) and (np.linalg.norm(gradient) > 1e-2):
     results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=True, print_results=False)
     pf_count += 1
     print('\n%d...\n' % pf_count)
-    phi = 0.975*pf.line_loading_metric(results) + 0.025*results.get('total_losses_pu') #combining metrics
-    # phi = pf.line_loading_metric([results])
+    phi = 0.94*pf.line_loading_metric(results) + 0.06*pf.generator_limit_metric(system, results) #combining metrics
+    # phi = 0.975*pf.line_loading_metric(results) + 0.025*results.get('total_losses_pu') #combining metrics
+    # phi = pf.line_loading_metric(results)
+    # phi = pf.generator_limit_metric(system, results)
     phi_pk = np.zeros(np.size(participation_factors))
     
     gradient_old = np.copy(gradient)
@@ -81,8 +94,10 @@ while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
         pf.load_participation_factors(system, p_fact_perturb) #load new p-factors
         
         results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=True, print_results=False)
-        phi_pk[k] = 0.975*pf.line_loading_metric(results) + 0.025*results.get('total_losses_pu') #combining metrics
-        # phi_pk[k] = pf.line_loading_metric([results])
+        phi_pk[k] = 0.94*pf.line_loading_metric(results) + 0.06*pf.generator_limit_metric(system, results) #combining metrics
+        # phi_pk[k] = 0.975*pf.line_loading_metric(results) + 0.025*results.get('total_losses_pu') #combining metrics
+        # phi_pk[k] = pf.line_loading_metric(results)
+        # phi_pk[k] = pf.generator_limit_metric(system, results)
         
         
         #ignoring the effect of perturbing the factor of the inactive generator(s) in this single case
@@ -104,6 +119,8 @@ while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
         gamma_BB = np.abs(np.vdot((participation_factors - p_fact_old), (gradient - gradient_old))) / (np.vdot(gradient - gradient_old, gradient - gradient_old))
         gamma_stab = 0.02 / np.linalg.norm(gradient)
         gamma = min(gamma_BB, gamma_stab)
+        gamma_list.append(gamma_BB)
+        gamma_stab_list.append(gamma_stab)
         
     
     p_fact_old = np.copy(participation_factors)
@@ -125,18 +142,18 @@ while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
     system.update({'generators':gens_base.copy()})
     pf.load_participation_factors(system, participation_factors)
 
-print('\nFinished.\n')
+print('\nFinished.\nParticipation Factors:')
+print(participation_factors)
 
 
 
-results_base = pf.run_power_flow(system_base, enforce_q_limits=True, distributed_slack=True, print_results=True)
+results_base = pf.run_power_flow(system_base, enforce_q_limits=True, distributed_slack=True, print_results=False)
 
-pf.plot_results(system_base, results_base, angle = True, name = ('Losing Bus 31 - Equal Factors\n%s\nLosses: %f pu' % (desc, results_base.get('total_losses_pu'))))
-pf.plot_results(system, results, angle = True, name = ('Losing Bus 31 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results.get('total_losses_pu'))))
+pf.plot_results(system_base, results_base, angle = True, plot='lg', name = ('Losing Bus %d - Equal Factors\n%s\nLosses: %f pu' % (inactive_bus,desc, results_base.get('total_losses_pu'))))
+pf.plot_results(system, results, angle = True, plot='lg', name = ('Losing Bus %d - After Gradient Steps\n%s\nLosses: %f pu' % (inactive_bus,desc, results.get('total_losses_pu'))))
 
-#%%
-print("\nWarnings:\n")
-pf.check_p_limits(system, results)
-pf.check_q_limits(system, results)
-pf.check_bus_voltage(system, results)
-pf.check_line_trafo_loading(system, results)
+# print("\nWarnings:\n")
+# pf.check_p_limits(system, results)
+# pf.check_q_limits(system, results)
+# pf.check_bus_voltage(system, results)
+# pf.check_line_trafo_loading(system, results)

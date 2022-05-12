@@ -1,4 +1,4 @@
-import power_flow_newton_raphson as pf
+import ds_power_flow as pf
 import pandapower as pp
 import pandapower.networks as nw
 import numpy as np
