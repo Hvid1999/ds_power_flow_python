@@ -61,7 +61,7 @@ p_fact_old = np.copy(participation_factors)
 
 
 while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
-    results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=True, print_results=False)
+    results = pf.run_power_flow(system, enforce_q_limits=True, print_results=False)
     pf_count += 1
     print('\n%d...\n' % pf_count)
     phi = results.get('total_losses_pu')
@@ -78,7 +78,7 @@ while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
         # system.update({'generators':gens_base.copy()})
         pf.load_participation_factors(system, p_fact_perturb) #load new p-factors
         
-        results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=True, print_results=False)
+        results = pf.run_power_flow(system, enforce_q_limits=True, print_results=False)
         phi_pk[k] = results.get('total_losses_pu')
         
         gradient[k] = (phi_pk[k] - phi) / epsilon
@@ -120,7 +120,7 @@ print(participation_factors)
 
 
 
-results_base = pf.run_power_flow(system_base, enforce_q_limits=True, distributed_slack=True, print_results=False)
+results_base = pf.run_power_flow(system_base, enforce_q_limits=True, print_results=False)
 phi_base = results_base.get('total_losses_pu')
 pf.plot_results(system_base, results_base, angle = True, name = ('Equal Factors - Losses: %f\n%s' % (phi_base,desc)))
 pf.plot_results(system, results, angle = True, name = ('After Gradient Steps - Losses: %f\n%s' % (phi,desc)))
@@ -139,7 +139,7 @@ pf.new_england_case_line_fix(system)
 system.update({'tolerance':1e-3})
 system.update({'iteration_limit':25})
 
-results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=True, print_results=False)
+results = pf.run_power_flow(system, enforce_q_limits=True, print_results=False)
 
 equal_factors_loss = results.get('total_losses_pu')
 min_loss = equal_factors_loss
@@ -151,7 +151,7 @@ for n in range(1,num_attempts):
     participation_factors = np.random.random(10)
     participation_factors = participation_factors / np.sum(participation_factors)
     pf.load_participation_factors(system, participation_factors)
-    results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=True, print_results=False)
+    results = pf.run_power_flow(system, enforce_q_limits=True, print_results=False)
     
     if results.get('total_losses_pu') < min_loss:
         min_loss = results.get('total_losses_pu')

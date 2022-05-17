@@ -23,7 +23,6 @@ network = pf.new_england_39_new_voltages(nw.case39())
 #https://pandapower.readthedocs.io/en/v2.8.0/networks/power_system_test_cases.html
 #==============================================================================
 
-
 # Scaling line resistance to obtain more realistic system losses
 network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 3.5 #around 2%
 # network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 7.0
@@ -66,7 +65,7 @@ pf.new_england_case_line_fix(system)
 
 results = pf.run_power_flow(system, enforce_q_limits=enforce_q_limits, distributed_slack=distributed_slack)
 
-pf.plot_results(system, results)
+# pf.plot_results(system, results)
 
 
 #%%

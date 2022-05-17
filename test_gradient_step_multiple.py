@@ -139,8 +139,7 @@ while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
     results = []
     for system in systems:
         pf.load_participation_factors(system, participation_factors)
-        results.append(pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=True, 
-                                         print_results=False))
+        results.append(pf.run_power_flow(system, enforce_q_limits=True, print_results=False))
     pf_count += 1
     print('\n%d...\n' % pf_count)
     
@@ -167,8 +166,7 @@ while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
         results = []
         for system in systems:
             pf.load_participation_factors(system, p_fact_perturb) #load new p-factors
-            results.append(pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=True, 
-                                             print_results=False))
+            results.append(pf.run_power_flow(system, enforce_q_limits=True, print_results=False))
         
         #If a generator is inactive in a contingency, the metric perturbation of the corresponding 
         #participation factor is ignored
@@ -218,8 +216,7 @@ print(participation_factors)
 
 
 for system in base_systems:
-    base_results.append(pf.run_power_flow(system, enforce_q_limits=True, 
-                                          distributed_slack=True, print_results=False))
+    base_results.append(pf.run_power_flow(system, enforce_q_limits=True, print_results=False))
 
 
 pf.plot_results(base_systems[0], base_results[0], angle = True, plot = 'lg', name = ('Losing Load 20 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[0].get('total_losses_pu'))))

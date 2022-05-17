@@ -73,7 +73,8 @@ gamma_stab_list = []
 
 
 while (step_count < step_count_limit) and (np.linalg.norm(gradient) > 1e-2):
-    results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=True, print_results=False)
+    results = pf.run_power_flow(system, enforce_q_limits=True, print_results=False)
+
     pf_count += 1
     print('\n%d...\n' % pf_count)
     phi = 0.94*pf.line_loading_metric(results) + 0.06*pf.generator_limit_metric(system, results) #combining metrics
@@ -93,7 +94,7 @@ while (step_count < step_count_limit) and (np.linalg.norm(gradient) > 1e-2):
         # system.update({'generators':gens_base.copy()})
         pf.load_participation_factors(system, p_fact_perturb) #load new p-factors
         
-        results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=True, print_results=False)
+        results = pf.run_power_flow(system, enforce_q_limits=True, print_results=False)
         phi_pk[k] = 0.94*pf.line_loading_metric(results) + 0.06*pf.generator_limit_metric(system, results) #combining metrics
         # phi_pk[k] = 0.975*pf.line_loading_metric(results) + 0.025*results.get('total_losses_pu') #combining metrics
         # phi_pk[k] = pf.line_loading_metric(results)
@@ -147,7 +148,7 @@ print(participation_factors)
 
 
 
-results_base = pf.run_power_flow(system_base, enforce_q_limits=True, distributed_slack=True, print_results=False)
+results_base = pf.run_power_flow(system_base, enforce_q_limits=True, print_results=False)
 
 pf.plot_results(system_base, results_base, angle = True, plot='lg', name = ('Losing Bus %d - Equal Factors\n%s\nLosses: %f pu' % (inactive_bus,desc, results_base.get('total_losses_pu'))))
 pf.plot_results(system, results, angle = True, plot='lg', name = ('Losing Bus %d - After Gradient Steps\n%s\nLosses: %f pu' % (inactive_bus,desc, results.get('total_losses_pu'))))
