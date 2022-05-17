@@ -676,66 +676,47 @@ def jacobian_calc_simplify(system, jacobian):
     
     return jacobian_calc
 
-
-def next_iteration(jacobian, vmag, delta, del_p, del_q):
-    #calculates the next iteration of the power flow
-    #based on inversion of the jacobian and matrix multiplication
-    x = np.row_stack((delta, vmag))
-    y = np.row_stack((del_p, del_q))
-    x_next = x + np.matmul(np.linalg.inv(jacobian), y)
-    
-    #splitting the x-vector into vectors for voltage magnitudes and angles
-    delta_next = x_next[0:np.size(delta)]
-    vmag_next = x_next[np.size(delta):]
-    return delta_next, vmag_next
-
-
-def dist_next_iteration(jacobian, vmag, delta, k_g, del_p, del_q):
+def next_iteration(dist_slack, jacobian, vmag, delta, k_g, del_p, del_q):
+    #single function for both single and distributed slack
     #calculates the next iteration of the power flow for distributed slack
     #based on inversion of the jacobian and matrix multiplication
     x = np.row_stack((delta, vmag))
-    x = np.append(x, [[k_g]], axis = 0) #append the slack parameter to iteration vector
+    if dist_slack:
+        x = np.append(x, [[k_g]], axis = 0) #append the slack parameter to iteration vector
+    
     y = np.row_stack((del_p, del_q))
 
     x_next = x + np.matmul(np.linalg.inv(jacobian), y) #calculating next iteration
     
     #separating variables
     delta_next = x_next[0:np.size(delta)]
-    vmag_next = x_next[np.size(delta):(np.size(x_next) - 1)]
-    k_g_next = x_next[-1][0]
+    if dist_slack:
+        vmag_next = x_next[np.size(delta):(np.size(x_next) - 1)]
+        k_g_next = x_next[-1][0]
+    else:
+        #k_g_next is always returned, but is 0 for single slack (unused)
+        k_g_next = 0 
+        vmag_next = x_next[np.size(delta):]
+        
     return delta_next, vmag_next, k_g_next
 
-
-def check_convergence(delta_next, vmag_next, delta, vmag, threshold):
+def check_convergence(dist_slack, delta_next, vmag_next, delta, vmag, k_g_next, k_g, threshold):
+    #single function for checking both single and distributed slack
     #returns true or false based on magnitude in change of iteration values for voltages
     #iteration step-based convergence criteria are most common, but it can also
     #be based on magnitudes of mismatch vectors
-    
     x_next = np.row_stack((delta_next, vmag_next))
     x = np.row_stack((delta, vmag))
-    checkvec = np.ones((x.shape))
-    
-    for i in range(np.size(x)):
-        if abs(x[i]) > 0: #avoid division by zero
-            checkvec[i] = (x_next[i] - x[i])/x[i]
-    
-    return np.all(np.absolute(checkvec) < threshold) 
+    if dist_slack:
+        x = np.append(x, [[k_g]], axis = 0)
+        x_next = np.append(x_next, [[k_g_next]], axis = 0)
 
-def dist_check_convergence(delta_next, vmag_next, delta, vmag, k_g_next, k_g, threshold):
-    #returns true or false based on magnitude in change of iteration values for voltages
-    #(distributed slack)
-    
-    x_next = np.row_stack((delta_next, vmag_next))
-    x_next = np.append(x_next, [[k_g_next]], axis = 0)
-    x = np.row_stack((delta, vmag))
-    x = np.append(x, [[k_g]], axis = 0)
     checkvec = np.ones((x.shape))
-    
     for i in range(np.size(x)):
         if abs(x[i]) > 0: #avoid division by zero
             checkvec[i] = (x_next[i] - x[i])/x[i]
     
-    return np.all(np.absolute(checkvec) < threshold) 
+    return np.all(np.absolute(checkvec) < threshold)
 
 def check_pv_bus(system, n_buses, q_full, print_results):
     #check if PV bus reactive power is within specified limits
@@ -811,7 +792,6 @@ def run_power_flow(system, enforce_q_limits, print_results=True):
     dist_slack = system.get('distributed_slack')
     recalculate = True
     recalcs = 0
-    converged = False
     
     if dist_slack:
         print("-------------------------------------------------------------")
@@ -827,7 +807,7 @@ def run_power_flow(system, enforce_q_limits, print_results=True):
     
         (vmag, delta, vmag_full, delta_full) = init_voltage_vecs(system)
         
-        k_g = 0.0 #used for distributed slack
+        k_g = k_g_next = 0.0 #used for distributed slack
     
         (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
     
@@ -852,15 +832,10 @@ def run_power_flow(system, enforce_q_limits, print_results=True):
         for i in range(1, iteration_limit + 1):
             #iterates on power flow until convergence until at maximum 
             #number of iterations
-            if dist_slack:
-                (delta_next, vmag_next, k_g_next) = dist_next_iteration(jacobian_calc, vmag, delta, 
-                                                                        k_g, del_p, del_q)
-                converged = dist_check_convergence(delta_next, vmag_next, delta, vmag, k_g_next, k_g, tolerance)
-            else:
-                (delta_next, vmag_next) = next_iteration(jacobian_calc, vmag, delta, del_p, del_q)
-                converged = check_convergence(delta_next, vmag_next, delta, vmag, tolerance)
+            (delta_next, vmag_next, k_g_next) = next_iteration(dist_slack, jacobian_calc, 
+                                                                      vmag, delta, k_g, del_p, del_q)
             
-            if converged:
+            if check_convergence(dist_slack, delta_next, vmag_next, delta, vmag, k_g_next, k_g, tolerance):
                 #If power flow has converged
                 if enforce_q_limits:
                     recalculate = check_pv_bus(system, n_buses, q_full, print_results)
@@ -953,8 +928,6 @@ def run_power_flow(system, enforce_q_limits, print_results=True):
     #Saving and exporting power flow results as dictionary
     vmag_res = pd.Series.to_numpy(df['vmag_pu'])
     delta_res = pd.Series.to_numpy(df['delta_deg']) * np.pi / 180
-    p_res = pd.Series.to_numpy(df['p_pu'])
-    q_res = pd.Series.to_numpy(df['q_pu']) 
 
     inactive_buses = inactive_bus_idx(system)
     j = 0

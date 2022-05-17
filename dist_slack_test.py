@@ -32,7 +32,7 @@ desc = "Medium Losses - Upscaled Line Resistance (Factor 3.5)"
 # desc = "High Losses - Upscaled Line Resistance (Factor 7.0)"
 
 enforce_q_limits = True
-distributed_slack = True
+distributed_slack = False
 # slack_gens = np.array([0,1,2,3,5,6,7,8,9]) #generator list indices (generators 0, 1 .. G)
 #participation_factors = np.array([0.7, 0.01, 0.07, 0.02, 0.03, 0.02, 0.02, 0.03, 0.1]) 
 slack_gens = np.array([0,1,2,3,4,5,6,7,8,9])
@@ -63,7 +63,7 @@ pf.new_england_case_line_fix(system)
 #and distribute the mismatch across the generators according to participation factors
 #pf.load_variation(system, [10,20], [1.10, 1.25])
 
-results = pf.run_power_flow(system, enforce_q_limits=enforce_q_limits, distributed_slack=distributed_slack)
+results = pf.run_power_flow(system, enforce_q_limits=enforce_q_limits, print_results=True)
 
 # pf.plot_results(system, results)
 
