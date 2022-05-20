@@ -31,6 +31,7 @@ def load_pandapower_case(network, enforce_q_limits=False, distributed_slack = Fa
     pandapower_results = pandapower_results[['vm_pu','va_degree','p_pu','q_pu']]
 
     ybus = network._ppc["internal"]["Ybus"].todense() #extract Ybus after running power flow
+    ybus = np.asarray(ybus) #from matrix to array object
     gen = network.gen #voltage controlled generators
     sgen = network.sgen #static generators (PQ)
     load = network.load
@@ -341,25 +342,17 @@ def get_pv_idx(system):
     #returns an array containing the indices of PV-buses
     
     inactive_buses = inactive_bus_idx(system)
-    pv_idx = np.empty((1,0), dtype=int)
-    offset = j = 0 #used to control bus indices when inactive buses are present
     gens = system.get('generators')
-    
-    for i in range(len(gens.index)):
-        if (gens.type[i] == 'pv') and gens.in_service[i]:
-            if (np.size(inactive_buses) > j) and (gens.bus[i] > inactive_buses[j]):
-                #To account for inactive buses, which essentialy reduces the 
-                #amount of buses in the system from a calculations standpoint
-                offset += 1
-                j += 1
-            pv_idx = np.append(pv_idx, gens.bus[i] - offset)
+    pv_idx = gens[gens.in_service & (gens.type=='pv')].bus.to_numpy()
+    #accounting for inactive buses effectively reducing the bus indices
+    for i in range(np.size(inactive_buses)):
+        pv_idx[pv_idx > inactive_buses[i]] -= 1
     
     return pv_idx
 
 def slack_idx(system):
     #returns the bus index of the slack or reference bus of the system
     inactive_buses = inactive_bus_idx(system)
-    offset = j = 0
     
     if system.get('distributed_slack'):
         bus = system.get('reference_bus')
@@ -368,11 +361,9 @@ def slack_idx(system):
     
     #accounting for inactive buses
     for i in range(np.size(inactive_buses)):
-        if bus > inactive_buses[j]:
-            offset += 1
-            j += 1
-    bus = bus - offset
-    
+        if bus > inactive_buses[i]:
+            bus -= 1
+            
     return bus
                 
 
@@ -502,20 +493,34 @@ def init_voltage_vecs(system):
 def calc_power_vecs(system, vmag, delta, g, b):
     n_buses = g.shape[0] 
     
+    # g = np.asarray(g)
+    # b = np.asarray(b)
+    
     #vectors containing power injection information about every bus
     p_full = np.zeros((n_buses,1))
     q_full = np.zeros((n_buses,1))
     
-    #calculate full power vectors based on the voltages of the system 
-    for k in range(n_buses): 
-        psum = 0
-        qsum = 0
-        for n in range(n_buses):
-            psum += vmag[n] * (g[k,n]*(np.cos(delta[k] - delta[n])) + b[k,n]*np.sin(delta[k] - delta[n]))
-            qsum += vmag[n] * (g[k,n]*(np.sin(delta[k] - delta[n])) - b[k,n]*np.cos(delta[k] - delta[n]))
-        p_full[k] = vmag[k] * psum
-        q_full[k] = vmag[k] * qsum
-
+    # #calculate full power vectors based on the voltages of the system 
+    # for k in range(n_buses): 
+    #     psum = 0
+    #     qsum = 0
+    #     for n in range(n_buses):
+    #         psum += vmag[n] * (g[k,n]*(np.cos(delta[k] - delta[n])) + b[k,n]*np.sin(delta[k] - delta[n]))
+    #         qsum += vmag[n] * (g[k,n]*(np.sin(delta[k] - delta[n])) - b[k,n]*np.cos(delta[k] - delta[n]))
+    #     p_full[k] = vmag[k] * psum
+    #     q_full[k] = vmag[k] * qsum
+        
+    #rewritten for speed    
+    for k in range(n_buses):         
+        delta_k = np.ones((n_buses,1)) * delta[k]
+        
+        psum = vmag * (g[k,:].reshape((n_buses,1)) * (np.cos(delta_k - delta)) + b[k,:].reshape((n_buses,1)) * np.sin(delta_k - delta))
+        
+        qsum = vmag * (g[k,:].reshape((n_buses,1)) * (np.sin(delta_k - delta)) - b[k,:].reshape((n_buses,1)) * np.cos(delta_k - delta))
+        
+        p_full[k] = vmag[k] * np.sum(psum)
+        q_full[k] = vmag[k] * np.sum(qsum)
+    
     #Checking for PV-busses in order to simplify eventual calculations
     pv_idx = get_pv_idx(system)
     
@@ -538,9 +543,15 @@ def calc_power_setpoints(system):
     
     pset = np.zeros((n_buses,1))
     qset = np.zeros((n_buses,1))
+    # pset = np.zeros(n_buses)
+    # qset = np.zeros(n_buses)
+    
     gens = system.get('generators')
     loads = system.get('loads')
     shunts = system.get('shunts')
+    #Shunts are as of now handled as loads 
+    #this allows them to affect bus voltages
+    
     
     #loading bus setpoints
     for i in range(len(loads.index)):
@@ -554,9 +565,6 @@ def calc_power_setpoints(system):
             #load is a negative power injection
             pset[k] -= loads.p[i] 
             qset[k] -= loads.q[i]
-    
-    #Shunts are as of now handled as loads 
-    #this allows them to affect bus voltages
     
     offset = j = 0
     for i in range(len(shunts.index)):
@@ -580,8 +588,36 @@ def calc_power_setpoints(system):
             if gens.type[i] == 'pq':
                 qset[k] += gens.qset[i]
     
-    pv_idx = get_pv_idx(system)
+    #rewritten for speed
+    # bus_idx = loads[loads.in_service == True].bus.to_numpy()
+    # p_load = loads[loads.in_service == True].p.to_numpy()
+    # q_load = loads[loads.in_service == True].q.to_numpy()
     
+    # for i in range(np.size(inactive_buses)):
+    #     bus_idx[bus_idx > inactive_buses[i]] -= 1
+    # pset[bus_idx] -= p_load
+    # qset[bus_idx] -= q_load
+    
+    # bus_idx = shunts[shunts.in_service == True].bus.to_numpy()
+    # p_shunt = shunts[shunts.in_service == True].p.to_numpy()
+    # q_shunt = shunts[shunts.in_service == True].q.to_numpy()
+    
+    # for i in range(np.size(inactive_buses)):
+    #     bus_idx[bus_idx > inactive_buses[i]] -= 1
+    # pset[bus_idx] -= p_shunt
+    # qset[bus_idx] -= q_shunt
+    
+    # bus_idx = gens[gens.in_service == True].bus.to_numpy()
+    # p_gen = gens[gens.in_service == True].pset.to_numpy()
+    # q_gen = gens[gens.in_service == True].qset.to_numpy()
+    
+    # for i in range(np.size(inactive_buses)):
+    #     bus_idx[bus_idx > inactive_buses[i]] -= 1
+    # pset[bus_idx] += p_gen
+    # q_gen[q_gen == None] = 0 #handling no specified q setpoint
+    # qset[bus_idx] += q_gen.astype(float)
+    
+    pv_idx = get_pv_idx(system)
     if system.get('distributed_slack'):
         qset = np.delete(qset, pv_idx, 0) #removing PV bus indices
     else:
@@ -589,6 +625,7 @@ def calc_power_setpoints(system):
         qset = np.delete(qset, pv_slack_idx, 0) #removing PV and slack bus indices
         pset = np.delete(pset, slack_idx(system), 0) #removing slack bus index
     
+    # return pset.reshape((np.size(pset),1)), qset.reshape((np.size(qset),1))
     return pset, qset
 
 
@@ -613,31 +650,59 @@ def calc_jacobian(system, vmag, delta, g, b, p, q):
     j4 = jacobian[(n_buses):(2*(n_buses)),(n_buses):(2*(n_buses))]
 
     #Calculating Jacobian matrix
-    for k in range(n_buses):
-        for n in range(n_buses):
-            if k == n: #diagonal elements
-                j1[k,n] = -q[k] - b[k,k] * vmag[k]**2
-                j2[k,n] = p[k] / vmag[k] + g[k,k] * vmag[k]
-                j3[k,n] = p[k] - g[k,k] * vmag[k]**2
-                j4[k,n] = q[k] / vmag[k] - b[k,k] * vmag[k]
+    # for k in range(n_buses):
+    #     for n in range(n_buses):
+    #         if k == n: #diagonal elements
+    #             j1[k,n] = -q[k] - b[k,k] * vmag[k]**2
+    #             j2[k,n] = p[k] / vmag[k] + g[k,k] * vmag[k]
+    #             j3[k,n] = p[k] - g[k,k] * vmag[k]**2
+    #             j4[k,n] = q[k] / vmag[k] - b[k,k] * vmag[k]
 
-            else: #off-diagonal elements
-                j1[k,n] = vmag[k] * vmag[n] * (g[k,n]*(np.sin(delta[k] - delta[n])) - b[k,n]*np.cos(delta[k] - delta[n]))
-                j2[k,n] = vmag[k] * (g[k,n]*(np.cos(delta[k] - delta[n])) + b[k,n]*np.sin(delta[k] - delta[n]))
-                j3[k,n] = -vmag[k] * vmag[n] * (g[k,n]*(np.cos(delta[k] - delta[n])) + b[k,n]*np.sin(delta[k] - delta[n]))
-                j4[k,n] = vmag[k] * (g[k,n]*(np.sin(delta[k] - delta[n])) - b[k,n]*np.cos(delta[k] - delta[n]))
+    #         else: #off-diagonal elements
+    #             j1[k,n] = vmag[k] * vmag[n] * (g[k,n]*(np.sin(delta[k] - delta[n])) - b[k,n]*np.cos(delta[k] - delta[n]))
+    #             j2[k,n] = vmag[k] * (g[k,n]*(np.cos(delta[k] - delta[n])) + b[k,n]*np.sin(delta[k] - delta[n]))
+    #             j3[k,n] = -vmag[k] * vmag[n] * (g[k,n]*(np.cos(delta[k] - delta[n])) + b[k,n]*np.sin(delta[k] - delta[n]))
+    #             j4[k,n] = vmag[k] * (g[k,n]*(np.sin(delta[k] - delta[n])) - b[k,n]*np.cos(delta[k] - delta[n]))
     
+    
+    #rewritten for speed
+    #using the power of numpy vectorization to avoid nested for loop
+    #to ensure vector shapes align, reshape is used, 
+    #and flatten at the end to create a flat one-dimensional array
+    for k in range(n_buses):
+        delta_k = np.ones((n_buses,1)) * delta[k]
+        
+        #off-diagonal elements
+        j1[k,:] = (vmag[k] * vmag * (g[k,:].reshape((n_buses,1))*(np.sin(delta_k - delta)) - b[k,:].reshape((n_buses,1))*np.cos(delta_k - delta))).flatten()
+        j2[k,:] = (vmag[k] * (g[k,:].reshape((n_buses,1))*(np.cos(delta_k - delta)) + b[k,:].reshape((n_buses,1))*np.sin(delta_k - delta))).flatten()
+        j3[k,:] = (-vmag[k] * vmag * (g[k,:].reshape((n_buses,1))*(np.cos(delta_k - delta)) + b[k,:].reshape((n_buses,1))*np.sin(delta_k - delta))).flatten()
+        j4[k,:] = (vmag[k] * (g[k,:].reshape((n_buses,1))*(np.sin(delta_k - delta)) - b[k,:].reshape((n_buses,1))*np.cos(delta_k - delta))).flatten()
+    
+        #diagonal elements
+        j1[k,k] = -q[k] - b[k,k] * vmag[k]**2
+        j2[k,k] = p[k] / vmag[k] + g[k,k] * vmag[k]
+        j3[k,k] = p[k] - g[k,k] * vmag[k]**2
+        j4[k,k] = q[k] / vmag[k] - b[k,k] * vmag[k]
+        
+        
     if system.get('distributed_slack'):
         #loading vector of participation factors from the system
         part_facts = np.zeros((2 * n_buses, 1)) #the full vector containing zeros for non-slack buses
         gens = system.get('generators')
         
+        inactive_buses = inactive_bus_idx(system)
+        offset = j = 0
         for i in range(len(gens.index)):
             #loading generator participation into the jacobian
-            part_facts[i] = gens.participation_factor[i]
+            #and accounting for inactive buses
+            if (np.size(inactive_buses) > j) and (gens.bus[i] > inactive_buses[j]):
+                offset += 1
+                j += 1
+            k = gens.bus[i] - offset
+            part_facts[k] = gens.participation_factor[i]
         
         jacobian = np.append(jacobian, part_facts, axis = 1)
-    
+        
     return jacobian
 
 def jacobian_calc_simplify(system, jacobian):
@@ -711,10 +776,15 @@ def check_convergence(dist_slack, delta_next, vmag_next, delta, vmag, k_g_next, 
         x = np.append(x, [[k_g]], axis = 0)
         x_next = np.append(x_next, [[k_g_next]], axis = 0)
 
-    checkvec = np.ones((x.shape))
-    for i in range(np.size(x)):
-        if abs(x[i]) > 0: #avoid division by zero
-            checkvec[i] = (x_next[i] - x[i])/x[i]
+    # checkvec = np.ones((x.shape))
+    # for i in range(np.size(x)):
+    #     if abs(x[i]) > 0: #avoid division by zero
+    #         checkvec[i] = (x_next[i] - x[i])/x[i]
+    
+    #rewritten for speed
+    #division by zero is handled by setting the index to = 1, not zero
+    #as that would place the index value below the convergence threshold        
+    checkvec = np.divide(((x_next-x)), x, out=np.ones_like(x_next), where=x!=0)
     
     return np.all(np.absolute(checkvec) < threshold)
 
@@ -733,12 +803,14 @@ def check_pv_bus(system, n_buses, q_full, print_results):
     shunts = system.get('shunts')
     
     for i in range(len(loads.index)):
-        k = loads.bus[i]
-        q_loads[k] -= loads.q[i]
+        if loads.in_service[i]:
+            k = loads.bus[i]
+            q_loads[k] -= loads.q[i]
         
     for i in range(len(shunts.index)):
-        k = shunts.bus[i]
-        q_loads[k] -= shunts.q[i]
+        if shunts.in_service[i]:
+            k = shunts.bus[i]
+            q_loads[k] -= shunts.q[i]
     
     q_loads = np.delete(q_loads, inactive_buses, axis=0)
     offset = j = 0
@@ -784,7 +856,7 @@ def check_pv_bus(system, n_buses, q_full, print_results):
     
     return limit_violation
 
-def run_power_flow(system, enforce_q_limits, print_results=True):
+def run_power_flow(system, enforce_q_limits, print_results=True, print_bus_type=True):
     #runs the Newton-Raphson based power flow algorithm on a valid system dictionary
     
     iteration_limit = system.get('iteration_limit')
@@ -817,7 +889,10 @@ def run_power_flow(system, enforce_q_limits, print_results=True):
     
         (pset, qset) = calc_power_setpoints(system)
     
-        (del_p, del_q) = calc_mismatch_vecs(system, p, q)
+        # (del_p, del_q) = calc_mismatch_vecs(system, p, q)
+        del_p = pset - p
+        del_q = qset - q
+        
     
         #obtaining list of non-PV and non-slack busses
         pv_idx = get_pv_idx(system)
@@ -850,42 +925,48 @@ def run_power_flow(system, enforce_q_limits, print_results=True):
                 else:
                     print("Power flow converged at %d iterations (tolerance of %.12f).\n" % (i, tolerance))
                     
-                    #reading bus types into list for saving results
-                    typelist = ['' for i in range(n_buses)]
-                    
-                    inactive_buses = inactive_bus_idx(system)
-                    
-                    if not dist_slack: 
-                        #since the distributed slack bus has no explicit slack bus
-                        offset = 0
-                        for i in range(np.size(inactive_buses)):
-                            if system.get('slack').bus[0] > inactive_buses[i]:
-                                offset += 1
-                        typelist[system.get('slack').bus[0] - offset] = 'SLACK'
-                    
-                    offset = j = 0
-                    for i in range(len(gens.index)):
-                        if (np.size(inactive_buses) > j) and (gens.bus[i] >= inactive_buses[j]):
-                            #account for inactive buses
-                            offset += 1
-                            j += 1
-                        k = gens.bus[i] - offset 
-                        typelist[k] = gens.type[i].upper()
-                    
-                    for i in range(n_buses):
-                        if typelist[i] == '':
-                            typelist[i] = 'PQ'
-                    
                     delta_full[non_ref_idx] = delta_next #updating voltage angles on all busses except ref/slack bus
                     vmag_full[pq_idx] = vmag_next #updating voltage magnitudes on non-PV busses (and non-slack)
                     if dist_slack: 
                         k_g = k_g_next
-                    
-                    #calculating final power vectors
+                        
+                    #calculating final power vectors and mismatches
                     (p, q, p_full, q_full) = calc_power_vecs(system, vmag_full, delta_full, g, b)
+                    del_p = pset - p
+                    del_q = qset - q
                     
+                    if print_bus_type:
+                        #reading bus types into list for saving results
+                        typelist = ['' for i in range(n_buses)]
+                        
+                        inactive_buses = inactive_bus_idx(system)
+                        
+                        if not dist_slack: 
+                            #since the distributed slack bus has no explicit slack bus
+                            offset = 0
+                            for i in range(np.size(inactive_buses)):
+                                if system.get('slack').bus[0] > inactive_buses[i]:
+                                    offset += 1
+                            typelist[system.get('slack').bus[0] - offset] = 'SLACK'
+                        
+                        offset = j = 0
+                        for i in range(len(gens.index)):
+                            if (np.size(inactive_buses) > j) and (gens.bus[i] >= inactive_buses[j]):
+                                #account for inactive buses
+                                offset += 1
+                                j += 1
+                            k = gens.bus[i] - offset 
+                            typelist[k] = gens.type[i].upper()
+                        
+                        for i in range(n_buses):
+                            if typelist[i] == '':
+                                typelist[i] = 'PQ'       
+                                
+                        d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
+                    else:
+                        d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten()}
+                        
                     #saving results in dataframe
-                    d = {'vmag_pu':vmag_full.flatten(), 'delta_deg':delta_full.flatten()*180/np.pi, 'p_pu':p_full.flatten(), 'q_pu':q_full.flatten(), 'type':typelist}
                     df = pd.DataFrame(data=d, index = np.arange(n_buses))
                     df.index.name = 'bus'
                 break
@@ -912,9 +993,9 @@ def run_power_flow(system, enforce_q_limits, print_results=True):
                 del_p = pset - (p + slack_distribution(system, k_g))
                 del_q = qset - q
             else:
-                (del_p, del_q) = calc_mismatch_vecs(system, p, q)
-            
-            y = np.row_stack((del_p, del_q))
+                del_p = pset - p
+                del_q = qset - q
+                # (del_p, del_q) = calc_mismatch_vecs(system, p, q)
             
         #Tracking how many times the while-loop has run to avoid endless loop
         #if the number of recalculations exceed the number of generators,
@@ -930,15 +1011,13 @@ def run_power_flow(system, enforce_q_limits, print_results=True):
     delta_res = pd.Series.to_numpy(df['delta_deg']) * np.pi / 180
 
     inactive_buses = inactive_bus_idx(system)
-    j = 0
     for i in range(np.size(inactive_buses)):
         #re-inserting inactive buses in results dataframe to reobtain
         #actual number of buses and illustrate results for inactive buses
         empty_row = pd.DataFrame({"vmag_pu": np.nan, "delta_deg": np.nan, "p_pu":0, "q_pu":0, "type":np.nan},index=[0])
-        df = pd.concat([df.iloc[:inactive_buses[j]], empty_row, 
-                        df.iloc[inactive_buses[j]:]]).reset_index(drop=True)
-        j += 1
-    
+        df = pd.concat([df.iloc[:inactive_buses[i]], empty_row, 
+                        df.iloc[inactive_buses[i]:]]).reset_index(drop=True)
+        
     p_loss = calc_system_losses(system, vmag_res, delta_res)    
 
     line_flows = calc_line_flows(system, df)
@@ -947,41 +1026,31 @@ def run_power_flow(system, enforce_q_limits, print_results=True):
     
     if dist_slack:
         #Calculating slack distribution and accounting for inactive buses
-        active_gen_indices = np.array([], dtype=int)
-    
-        gens = system.get('generators')
-        for i in range(len(gens.index)):
-            if gens.in_service[i]:
-                active_gen_indices = np.append(active_gen_indices, gens.index[i])
-    
+        active_gen_indices = gens[gens.in_service].index.to_numpy()
         indices = np.arange(system.get('n_buses'))
     
-        if np.size(inactive_buses) > 0:
-            offset = 0
-            j = -1
-            for idx in inactive_buses:
-                indices[indices >= inactive_buses[j]] += 1
-                j -= 1
+        #reverse loop to get proper correction of bus indices
+        for i in range(np.size(inactive_buses)-1, -1, -1):
+            indices[indices >= inactive_buses[i]] += 1
         
         slack_distribution_df = pd.DataFrame(data={'p_pu':(-1)*slack_distribution(system, k_g).flatten()}, 
                                                 index = indices)
-    
         slack_distribution_df.index.name = 'bus'
     
         slack_distribution_df = slack_distribution_df.filter(items = gens['bus'].to_numpy()[active_gen_indices], axis = 0)
         slack_distribution_df['\u03C0'] = gens['participation_factor'].to_numpy()[active_gen_indices]
         
-        #Participation factors are defined bus-wise
         #some pandapower systems have multiple generators at a single bus (in case of static gens)
         #the line below is a workaround to avoid showing multiple busses and too much slack
         slack_distribution_df = slack_distribution_df.groupby(level=0).mean()
         
         #export results as dictionary
         results = {'bus_results':df, 'line_flows':line_flows, 'total_losses_pu':p_loss, 'transformer_flows':trafo_flows,
-                   'mismatches':calc_mismatch_vecs(system, p, q), 'slack_distribution':slack_distribution_df}
+                    'mismatches':(del_p, del_q), 'slack_distribution':slack_distribution_df}
     else:
         results = {'bus_results':df, 'line_flows':line_flows, 'transformer_flows':trafo_flows, 
-                   'total_losses_pu':p_loss, 'mismatches':y}
+                    'total_losses_pu':p_loss, 'mismatches':(del_p, del_q)}
+        
         
     gen_res = get_generator_results(system, results)
     results.update({'generator_results':gen_res})
@@ -1000,9 +1069,9 @@ def run_power_flow(system, enforce_q_limits, print_results=True):
         check_q_limits(system, results)
         check_bus_voltage(system, results)
         check_line_trafo_loading(system, results)
-    
+     
     return results 
-    
+        
 
 # =============================================================================
 # Functions for evaluating power flow results
@@ -1138,8 +1207,8 @@ def calc_line_flows(system, bus_results):
     #P_ft, Ptf, Q_ft, Q_tf, I_ft, I_tf, S_ft, S_tf
     #where ft = from/to and tf = to/from
     
-    vmag = np.copy(bus_results.vmag_pu.to_numpy())
-    delta = np.copy(bus_results.delta_deg.to_numpy()) * np.pi / 180
+    vmag = bus_results.vmag_pu.to_numpy()
+    delta = bus_results.delta_deg.to_numpy() * np.pi / 180
     
     s_base = system.get('s_base')
     freq = system.get('frequency')
@@ -1222,8 +1291,8 @@ def calc_transformer_loadings(system, bus_results):
     #Note: Simplified representation of transformer as a series impedance between busses
     #(typical per-unit representation)
 
-    vmag = np.copy(bus_results.vmag_pu.to_numpy())
-    delta = np.copy(bus_results.delta_deg.to_numpy()) * np.pi / 180
+    vmag = bus_results.vmag_pu.to_numpy()
+    delta = bus_results.delta_deg.to_numpy() * np.pi / 180
     
     trafo = system.get('transformers')
     bus = system.get('buses')
@@ -1234,6 +1303,7 @@ def calc_transformer_loadings(system, bus_results):
     #initializing empty arrays for storing data
     i_lv_pu = np.zeros(n_trafo, dtype = complex)
     i_hv_pu = np.zeros(n_trafo, dtype = complex)
+    
     i_lv_ka = np.zeros(n_trafo, dtype = complex)
     i_hv_ka = np.zeros(n_trafo, dtype = complex)
 
@@ -1252,10 +1322,10 @@ def calc_transformer_loadings(system, bus_results):
         inactive_buses = inactive_bus_idx(system)
         vmag = np.delete(vmag, inactive_buses)
         delta = np.delete(delta, inactive_buses)
-        for i in range(np.size(inactive_buses)):
-            lv[lv > inactive_buses[-1]] -= 1
-            hv[hv > inactive_buses[-1]] -= 1
-            inactive_buses = np.delete(inactive_buses, -1)
+        
+        for i in range(np.size(inactive_buses)-1, -1, -1):
+            lv[lv > inactive_buses[i]] -= 1
+            hv[hv > inactive_buses[i]] -= 1
     
     for i in range(n_trafo):
         if trafo.in_service[i] == False:
@@ -1295,10 +1365,17 @@ def calc_system_losses(system, vmag, delta):
     (n_buses, g, b) = process_admittance_mat(system)
     losses = 0
 
+    # for k in range(n_buses):
+    #     losses += vmag[k] ** 2 * g[k,k]
+    #     for n in range(k + 1, n_buses): #starts at n = k + 1 to avoid n == k as well as repeating behavior
+    #         losses += 2 * vmag[k] * vmag[n] * g[k,n] * np.cos(delta[k] - delta[n]) 
+    
+    #rewritten for speed
     for k in range(n_buses):
         losses += vmag[k] ** 2 * g[k,k]
-        for n in range(k + 1, n_buses): #starts at n = k + 1 to avoid n == k as well as repeating behavior
-            losses += 2 * vmag[k] * vmag[n] * g[k,n] * np.cos(delta[k] - delta[n]) 
+        delta_k = delta[k]#starts at n = k + 1 to avoid n == k as well as repeating behavior
+        losses += np.sum(2 * vmag[k] * vmag[(k+1):] * g[k,(k+1):] * np.cos(delta_k - delta[(k+1):])) 
+    
     return losses
 
 def slack_distribution(system, k_g):

@@ -2,6 +2,7 @@ import ds_power_flow as pf
 import pandapower.networks as nw
 import numpy as np
 import pandas as pd
+import time
 
 pd.options.display.float_format = '{:.6f}'.format #avoid scientific notation when printing dataframes
 
@@ -71,7 +72,7 @@ p_fact_old = np.copy(participation_factors)
 gamma_list = []
 gamma_stab_list = []
 
-
+t1 = time.time()
 while (step_count < step_count_limit) and (np.linalg.norm(gradient) > 1e-2):
     results = pf.run_power_flow(system, enforce_q_limits=True, print_results=False)
 
@@ -146,7 +147,8 @@ while (step_count < step_count_limit) and (np.linalg.norm(gradient) > 1e-2):
 print('\nFinished.\nParticipation Factors:')
 print(participation_factors)
 
-
+t2 = time.time()
+print('\nTime elapsed: %f s' % (t2-t1))
 
 results_base = pf.run_power_flow(system_base, enforce_q_limits=True, print_results=False)
 

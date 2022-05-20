@@ -32,10 +32,10 @@ desc = "Medium Losses - Upscaled Line Resistance (Factor 3.5)"
 # desc = "High Losses - Upscaled Line Resistance (Factor 7.0)"
 
 enforce_q_limits = True
-distributed_slack = False
+distributed_slack = True
 # slack_gens = np.array([0,1,2,3,5,6,7,8,9]) #generator list indices (generators 0, 1 .. G)
 #participation_factors = np.array([0.7, 0.01, 0.07, 0.02, 0.03, 0.02, 0.02, 0.03, 0.1]) 
-slack_gens = np.array([0,1,2,3,4,5,6,7,8,9])
+slack_gens = np.array([])
 participation_factors = np.array([])
 
 

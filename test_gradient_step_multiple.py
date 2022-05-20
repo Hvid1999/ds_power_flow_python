@@ -2,6 +2,7 @@ import ds_power_flow as pf
 import pandapower.networks as nw
 import numpy as np
 import pandas as pd
+import time
 
 pd.options.display.float_format = '{:.6f}'.format #avoid scientific notation when printing dataframes
 
@@ -133,7 +134,7 @@ step_count = 0
 gradient_old = np.copy(gradient)
 p_fact_old = np.copy(participation_factors)
 
-
+t1 = time.time()
 
 while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
     results = []
@@ -214,6 +215,8 @@ while (step_count < 20) and (np.linalg.norm(gradient) > 1e-2):
 print('\nFinished.\nParticipation Factors:')
 print(participation_factors)
 
+t2 = time.time()
+print('\nTime elapsed: %f s' % (t2-t1))
 
 for system in base_systems:
     base_results.append(pf.run_power_flow(system, enforce_q_limits=True, print_results=False))
