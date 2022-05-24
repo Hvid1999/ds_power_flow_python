@@ -751,7 +751,8 @@ def next_iteration(dist_slack, jacobian, vmag, delta, k_g, del_p, del_q):
     
     y = np.row_stack((del_p, del_q))
 
-    x_next = x + np.matmul(np.linalg.inv(jacobian), y) #calculating next iteration
+    # x_next = x + np.matmul(np.linalg.inv(jacobian), y) #calculating next iteration
+    x_next = x + np.linalg.solve(jacobian, y) #calculating next iteration
     
     #separating variables
     delta_next = x_next[0:np.size(delta)]
