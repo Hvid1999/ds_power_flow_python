@@ -17,12 +17,6 @@ network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 5.0 #around 3%
 desc = "Medium Losses - Upscaled Line Resistance (Factor 5.0)"
 # desc = "High Losses - Upscaled Line Resistance (Factor 7.0)"
 
-#Note:
-#Bus 39 represents interconnection to an aggregated New York system.
-#The generator is therefore modelled with a very high inertia constant.
-
-
-
 slack_gens = np.arange(0,10)
 # slack_gens = np.array([0,1,3,4,5,6,7,8,9])
 # participation_factors = np.array([])

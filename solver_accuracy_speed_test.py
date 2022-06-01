@@ -7,38 +7,14 @@ import time
 
 pd.options.display.float_format = '{:.6f}'.format #avoid scientific notation when printing dataframes
 
-#==============================================================================
-#network = nw.case4gs()
-#network = nw.case5()
-#network = nw.case6ww()
-#network = nw.case9()
-#network = nw.case14()
-#network = nw.case24_ieee_rts()
-#network = nw.case30()
-#network = nw.case_ieee30()
-#network = nw.case33bw()
-#network = nw.case39() #New England 39-bus system
-
 network = pf.new_england_39_new_voltages(nw.case39())
-
-#Cases source: 
-#https://pandapower.readthedocs.io/en/v2.8.0/networks/power_system_test_cases.html
-#==============================================================================
-
 enforce_q_limits = True
 slack_gens = np.array([1])
 participation_factors = np.array([0,1,0,0,0,0,0,0,0,0])
 
 n_comp = 300
 #%%
-#Run simple power flows, compare single slack to PP and note the difference between single
-# and distributed slack solutions to validate results. Try running distributed slack power
-# flow but only with participation of the original single slack bus to verify the methodology
-# of the distributed slack bus.
-
-#Either include full list of results in report side-by-side or calculate the average deviation from
-#pandapower for each parameter for 
-#1: single slack and 2: distributed slack with a single slack bus in list of gens
+#Testing accuracy
 
 (system, pandapower_results) = pf.load_pandapower_case(network, enforce_q_limits = enforce_q_limits,
                                                        distributed_slack = False, slack_gens = slack_gens,
@@ -47,7 +23,6 @@ system.update({'tolerance':1e-08})
 results = pf.run_power_flow(system, enforce_q_limits=enforce_q_limits, print_results=False)
 
 
-slack_gens = np.array([1])
 system_ds = pf.load_pandapower_case(network, enforce_q_limits = enforce_q_limits,
                                                        distributed_slack = True, slack_gens = slack_gens,
                                                        participation_factors = participation_factors)[0]
@@ -73,13 +48,12 @@ average_diff_ds = bus_diff_ds.mean(axis=0)
 
 
 #%%
-#The time it takes to run the runpp-command in PP versus run_power_flow -command
-# for single and distributed slack... Relate speed to the inversion of the Jacobian matrix.
-#https://stackoverflow.com/questions/2866380/how-can-i-time-a-code-segment-for-testing-performance-with-pythons-timeit
-#Try with difference convergence tolerances
+#Testing speed
+
 network = pf.new_england_39_new_voltages(nw.case39())
 enforce_q_limits = True
 
+#PandaPower
 pp_time_sum = 0
 for i in range(n_comp):
     t1 = time.time()
@@ -88,6 +62,7 @@ for i in range(n_comp):
     pp_time_sum += t2-t1
 pp_time = pp_time_sum / n_comp
 
+#Single slack with Q-lims and low tolerance
 pf_time_sum = 0
 for i in range(n_comp):
     system = pf.load_pandapower_case(network, enforce_q_limits = enforce_q_limits,
@@ -100,7 +75,7 @@ for i in range(n_comp):
     pf_time_sum += t2-t1
 pf_time = pf_time_sum / n_comp
 
-
+#Single slack with Q-lims and increased tolerance
 pf_time_sum_2 = 0
 for i in range(n_comp):
     system = pf.load_pandapower_case(network, enforce_q_limits = enforce_q_limits,
@@ -113,7 +88,7 @@ for i in range(n_comp):
     pf_time_sum_2 += t2-t1
 pf_time_2 = pf_time_sum_2 / n_comp
 
-
+#Distributed slack with Q-lims and increased tolerance
 pf_time_sum_3 = 0
 for i in range(n_comp):
     system_ds = pf.load_pandapower_case(network, enforce_q_limits = enforce_q_limits,
@@ -134,7 +109,7 @@ print('Custom solver (DS - tolerance of 1e-03): %f s' %pf_time_3)
 
 speed_results_q_lim = {'pandapower':pp_time, 'Custom 1e-08':pf_time, 'Custom 1e-03':pf_time_2, 'Custom (DS) 1e-03':pf_time_3}
 #%%
-#Not enforcing q-limits
+#Speed: Not enforcing q-limits
 network = pf.new_england_39_new_voltages(nw.case39())
 enforce_q_limits = False
 system = pf.load_pandapower_case(network, enforce_q_limits = enforce_q_limits,

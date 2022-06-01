@@ -9,7 +9,6 @@ pd.options.display.float_format = '{:.6f}'.format #avoid scientific notation whe
 #system tweaks
 network = pf.new_england_39_new_voltages(nw.case39())
 network.gen['vm_pu'][5] = 1.058
-# network.load['q_mvar'][14] += 130 #simulating 130 MVAR shunt compensation at bus with consistent overvoltage for higher losses
 
 #Contingency
 inactive_bus = 37
@@ -24,10 +23,6 @@ network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 4.8 #around 3%
 # desc = "Low Losses"
 desc = "Medium Losses - Upscaled Line Resistance (Factor 5.0)"
 # desc = "High Losses - Upscaled Line Resistance (Factor 7.0)"
-
-#Note:
-#Bus 39 represents interconnection to an aggregated New York system.
-#The generator is therefore modelled with a very high inertia constant.
 
 
 # slack_gens = np.arange(0,10)

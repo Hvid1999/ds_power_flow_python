@@ -17,7 +17,6 @@ network.gen['vm_pu'][5] = 1.058
 #Issue: Participation factors don't have the same size if number of slack gens vary
 
 
-
 # Scaling line resistance to obtain more realistic system losses
 # network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 3.5 #around 2%
 network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 5.0 #around 3%
@@ -28,9 +27,6 @@ network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 5.0 #around 3%
 desc = "Medium Losses - Upscaled Line Resistance (Factor 5.0)"
 # desc = "High Losses - Upscaled Line Resistance (Factor 7.0)"
 
-#Note:
-#Bus 39 represents interconnection to an aggregated New York system.
-#The generator is therefore modelled with a very high inertia constant.
 
 systems = []
 base_systems = []

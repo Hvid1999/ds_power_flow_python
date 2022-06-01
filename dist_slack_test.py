@@ -38,14 +38,6 @@ distributed_slack = True
 slack_gens = np.array([])
 participation_factors = np.array([])
 
-
-#Contingency testing
-#network.load['in_service'][0] = False
-# network.line['in_service'][33] = False
-# network.line['in_service'][0] = False
-# network.gen['in_service'][9] = False
-
-
 #function loading test case system information and power flow results from PandaPower
 (system, pandapower_results) = pf.load_pandapower_case(network, enforce_q_limits = enforce_q_limits,
                                                        distributed_slack = distributed_slack, slack_gens = slack_gens,
@@ -58,10 +50,6 @@ participation_factors = np.array([])
 
 pf.new_england_case_line_fix(system)
 
-
-#Vary load at the stated indices in the loads list of dictionaries
-#and distribute the mismatch across the generators according to participation factors
-#pf.load_variation(system, [10,20], [1.10, 1.25])
 
 results = pf.run_power_flow(system, enforce_q_limits=enforce_q_limits, print_results=True)
 
@@ -139,7 +127,7 @@ for i in range(9):
     results = pf.run_power_flow(system, enforce_q_limits=True, distributed_slack=ds, print_results=False)
     pf.plot_results(system, results, name = ('Bus %d\n%s' % (bus, desc)))
     # except:
-        # 1+1            
+        # pass           
 
 #%%
 #Evaluating bus contingencies to find troublesome cases
