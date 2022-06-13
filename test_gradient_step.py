@@ -73,10 +73,10 @@ while (step_count < step_count_limit) and (np.linalg.norm(gradient) > 1e-2):
 
     pf_count += 1
     print('\n%d...\n' % pf_count)
-    phi = 0.94*pf.line_loading_metric(results) + 0.06*pf.generator_limit_metric(system, results) #combining metrics
+    # phi = 0.94*pf.line_loading_metric(results) + 0.06*pf.generator_limit_metric(system, results) #combining metrics
     # phi = 0.975*pf.line_loading_metric(results) + 0.025*results.get('total_losses_pu') #combining metrics
     # phi = pf.line_loading_metric(results)
-    # phi = pf.generator_limit_metric(system, results)
+    phi = pf.generator_limit_metric(system, results)
     phi_pk = np.zeros(np.size(participation_factors))
     
     gradient_old = np.copy(gradient)
@@ -91,10 +91,10 @@ while (step_count < step_count_limit) and (np.linalg.norm(gradient) > 1e-2):
         pf.load_participation_factors(system, p_fact_perturb) #load new p-factors
         
         results = pf.run_power_flow(system, enforce_q_limits=True, print_results=False)
-        phi_pk[k] = 0.94*pf.line_loading_metric(results) + 0.06*pf.generator_limit_metric(system, results) #combining metrics
+        # phi_pk[k] = 0.94*pf.line_loading_metric(results) + 0.06*pf.generator_limit_metric(system, results) #combining metrics
         # phi_pk[k] = 0.975*pf.line_loading_metric(results) + 0.025*results.get('total_losses_pu') #combining metrics
         # phi_pk[k] = pf.line_loading_metric(results)
-        # phi_pk[k] = pf.generator_limit_metric(system, results)
+        phi_pk[k] = pf.generator_limit_metric(system, results)
         
         
         #ignoring the effect of perturbing the factor of the inactive generator(s) in this single case
@@ -147,8 +147,11 @@ print('\nTime elapsed: %f s' % (t2-t1))
 
 results_base = pf.run_power_flow(system_base, enforce_q_limits=True, print_results=False)
 
-pf.plot_results(system_base, results_base, angle = True, plot='lg', name = ('Losing Bus %d - Equal Factors\n%s\nLosses: %f pu' % (inactive_bus,desc, results_base.get('total_losses_pu'))))
-pf.plot_results(system, results, angle = True, plot='lg', name = ('Losing Bus %d - After Gradient Steps\n%s\nLosses: %f pu' % (inactive_bus,desc, results.get('total_losses_pu'))))
+
+# name = ('Losing Bus %d - Equal Factors\n%s\nLosses: %f pu' % (inactive_bus,desc, results_base.get('total_losses_pu')))
+pf.plot_results(system_base, results_base, angle = True, plot='lg', lg_lim=[115,0])
+# name = ('Losing Bus %d - After Gradient Steps\n%s\nLosses: %f pu' % (inactive_bus,desc, results.get('total_losses_pu')))
+pf.plot_results(system, results, angle = True, plot='lg',lg_lim=[115,110])
 
 # print("\nWarnings:\n")
 # pf.check_p_limits(system, results)

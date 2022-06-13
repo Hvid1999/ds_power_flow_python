@@ -218,17 +218,26 @@ for system in base_systems:
     base_results.append(pf.run_power_flow(system, enforce_q_limits=True, print_results=False))
 
 
-pf.plot_results(base_systems[0], base_results[0], angle = True, plot = 'lg', name = ('Losing Load 20 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[0].get('total_losses_pu'))))
-pf.plot_results(systems[0], results[0], angle = True, plot = 'lg', name = ('Losing Load 20 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[0].get('total_losses_pu'))))
 
-pf.plot_results(base_systems[1], base_results[1], angle = True, plot = 'lg', name = ('Losing Bus 31 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[1].get('total_losses_pu'))))
-pf.plot_results(systems[1], results[1], angle = True, plot = 'lg', name = ('Losing Bus 31 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[1].get('total_losses_pu'))))
+# name = ('Losing Load 20 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[0].get('total_losses_pu')))
+pf.plot_results(base_systems[0], base_results[0], angle = True, plot = 'lg', lg_lim = [115, 115])
+ # name = ('Losing Load 20 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[0].get('total_losses_pu')))
+pf.plot_results(systems[0], results[0], angle = True, plot = 'lg', lg_lim = [115, 115])
 
-pf.plot_results(base_systems[2], base_results[2], angle = True, plot = 'lg', name = ('Losing Bus 34 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[2].get('total_losses_pu'))))
-pf.plot_results(systems[2], results[2], angle = True, plot = 'lg', name = ('Losing Bus 34 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[2].get('total_losses_pu'))))
+# name = ('Losing Bus 31 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[1].get('total_losses_pu')))
+pf.plot_results(base_systems[1], base_results[1], angle = True, plot = 'lg', lg_lim = [115, 115])
+# name = ('Losing Bus 31 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[1].get('total_losses_pu')))
+pf.plot_results(systems[1], results[1], angle = True, plot = 'lg', lg_lim = [115, 115])
 
-pf.plot_results(base_systems[3], base_results[3], angle = True, plot = 'lg', name = ('Losing Bus 37 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[2].get('total_losses_pu'))))
-pf.plot_results(systems[3], results[3], angle = True, plot = 'lg', name = ('Losing Bus 37 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[2].get('total_losses_pu'))))
+# name = ('Losing Bus 34 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[2].get('total_losses_pu')))
+pf.plot_results(base_systems[2], base_results[2], angle = True, plot = 'lg', lg_lim = [115, 115])
+# name = ('Losing Bus 34 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[2].get('total_losses_pu')))
+pf.plot_results(systems[2], results[2], angle = True, plot = 'lg', lg_lim = [115, 115])
+
+# name = ('Losing Bus 37 - Equal Factors\n%s\nLosses: %f pu' % (desc, base_results[2].get('total_losses_pu')))
+pf.plot_results(base_systems[3], base_results[3], angle = True, plot = 'lg', lg_lim = [115, 115])
+ # name = ('Losing Bus 37 - After Gradient Steps\n%s\nLosses: %f pu' % (desc, results[2].get('total_losses_pu')))
+pf.plot_results(systems[3], results[3], angle = True, plot = 'lg', lg_lim = [115, 115])
 
 
 # print("\nWarnings:\n")

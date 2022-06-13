@@ -10,8 +10,8 @@ network = pf.new_england_39_new_voltages(nw.case39())
 network.gen['vm_pu'][5] = 1.058
 
 # Scaling line resistance to obtain more realistic system losses
-network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 5.0 #around 3%
-# network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 7.0 #around 4.5%
+# network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 5.0 #around 3%
+network.line['r_ohm_per_km'] = network.line['r_ohm_per_km'] * 7.0 #around 4.5%
 
 # desc = "Low Losses"
 desc = "Medium Losses - Upscaled Line Resistance (Factor 5.0)"
@@ -96,10 +96,12 @@ results_ds2 = pf.run_power_flow(system_ds2, enforce_q_limits=True)
 
 # pf.plot_result_comparison(results_ss, results_ds, angle=True, name = ('Case 1\n%s\nSS vs. DS - Equal Participation Factors') % desc)
 
-pf.plot_result_comparison(results_ss, results_ds2, angle=True, fixed_y_axis_values=[0.0055,18,14,9], name = ('Case 1\n%s\nSS vs. DS - Adjusted Participation Factors') % desc)
+# name = ('Case 1\n%s\nSS vs. DS - Adjusted Participation Factors') % desc
+pf.plot_result_comparison(results_ss, results_ds2, angle=True, fixed_y_axis_values=[0.005,20,20,10])
 
 # pf.plot_result_comparison(results_ds, results_ds2, angle=True, name = ('Case 1\n%s\nDS - Equal vs. Adjusted Factors') % desc)
 
-# pf.plot_result_comparison(results_ss, results_ss2, angle=True, name = ('Case 1\n%s\nSS - Original Slack vs. Hydro Plant Slack') % desc)
+# name = ('Case 1\n%s\nSS - Original Slack vs. Hydro Plant Slack') % desc
+# pf.plot_result_comparison(results_ss, results_ss2, angle=True, fixed_y_axis_values=[0.005,20,20,10])
 
 # pf.plot_result_comparison(results_ds2, results_ss2, angle=True, name = ('Case 1\n%s\nSingle Hydro Plant Slack vs. DS Adjusted Factors') % desc)

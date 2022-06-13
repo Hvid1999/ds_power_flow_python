@@ -9,6 +9,7 @@
 import numpy as np
 import pandas as pd
 import pandapower as pp
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gsp
 
@@ -1405,20 +1406,29 @@ def slack_distribution(system, k_g):
 # Functions for plotting results: Bus voltages, line/trafo loadings
 
 
-def plot_results(system, results, angle=False ,name='', save_directory='', plot=''):
+def plot_results(system, results, angle=False ,name='', save_directory='', plot='', axis_values=[0,0,0,0,0], lg_lim=[0,0]):
     #Note: need small changes if the system does not have transformers 
     #or if the system has different bus voltage limits for each bus
     #but the functionality is based on the New England 39 bus system
     
+    #axis_values[0]: min y-value for voltage magnitude
+    #axis_values[1]: max y-value for voltage magnitude
+    #axis_values[2]: min/max value for voltage angle
+    #axis_values[3]: max y-value for line loading
+    #axis_values[4]: max y-value for transformer loading
+    mpl.rcParams["axes.titlesize"] = 19
+    mpl.rcParams["axes.labelsize"] = 18
+    mpl.rcParams["xtick.labelsize"] = 15
+    mpl.rcParams["ytick.labelsize"] = 16
     if plot == 'lines':
         fig = plt.figure(dpi=200)
-        fig.set_figheight(11)
-        fig.set_figwidth(11)
+        fig.set_figheight(10)
+        fig.set_figwidth(12)
         plt.bar(results.get('line_flows').index, results.get('line_flows')['loading_percent'], 
                     color='teal')
         # plt.scatter(results.get('line_flows').index, np.ones(len(results.get('line_flows').index))*100, marker="_", color='tab:red',s=30)
         plt.axhline(y=100, color='tab:red', linestyle='--')
-        if  max(results.get('line_flows')['loading_percent']) > 100:
+        if  max(results.get('line_flows')['loading_percent']) > 110:
             plt.ylim(0,max(results.get('line_flows')['loading_percent']) + 5)
         else:
             plt.ylim(0,110)
@@ -1440,7 +1450,7 @@ def plot_results(system, results, angle=False ,name='', save_directory='', plot=
                 color='darkcyan')
         # plt.scatter(results.get('line_flows').index, np.ones(len(results.get('line_flows').index))*100, marker="_", color='tab:red',s=30)
         plt.axhline(y=100, color='tab:red', linestyle='--')
-        if  max(gen_loadings) > 100:
+        if  max(gen_loadings) > 110:
             plt.ylim(0,max(gen_loadings + 5))
         else:
             plt.ylim(0,110)
@@ -1475,6 +1485,8 @@ def plot_results(system, results, angle=False ,name='', save_directory='', plot=
         ax1.set_ylabel('Percentage')
         ax1.set_xlabel('Generator')
         ax1.set_xticks(range(0, len(gen_loadings), 2))
+        if lg_lim[0] != 0:
+            ax1.set_ylim(0, lg_lim[0])
         ax1.grid(linestyle='--', linewidth=0.5, alpha=0.65)
         ax1.margins(x=0.025)
         
@@ -1483,7 +1495,9 @@ def plot_results(system, results, angle=False ,name='', save_directory='', plot=
                     color='teal')
         # plt.scatter(results.get('line_flows').index, np.ones(len(results.get('line_flows').index))*100, marker="_", color='tab:red',s=30)
         ax2.axhline(y=100, color='tab:red', linestyle='--')
-        if  max(results.get('line_flows')['loading_percent']) > 100:
+        if lg_lim[1] != 0:
+            ax2.set_ylim(0,lg_lim[1])
+        elif  max(results.get('line_flows')['loading_percent']) > 110:
             ax2.set_ylim(0,max(results.get('line_flows')['loading_percent']) + 5)
         else:
             ax2.set_ylim(0,110)
@@ -1519,10 +1533,12 @@ def plot_results(system, results, angle=False ,name='', save_directory='', plot=
         # ax1.scatter(system.get('buses').index, system.get('buses')['min_vm_pu'], marker="_", color='tab:red',s=30)
         ax1.axhline(y=system.get('buses')['max_vm_pu'][0], color='tab:red', linestyle='--')
         ax1.axhline(y=system.get('buses')['min_vm_pu'][0], color='tab:red', linestyle='--')
-        ax1.title.set_text('Bus Voltage')
+        ax1.title.set_text('Voltage Magnitude')
         ax1.set_ylabel('Magnitude [p.u.]')
         ax1.set_xlabel('Bus')
         ax1.set_xticks(range(0, len(results.get('bus_results').index), 2))
+        if (axis_values[0] != 0) and (axis_values[1] != 0):
+            ax1.set_ylim(-axis_values[0], axis_values[1])
         ax1.grid(linestyle='--', linewidth=0.5, alpha=0.65)
         ax1.margins(x=0.025)
         
@@ -1534,14 +1550,18 @@ def plot_results(system, results, angle=False ,name='', save_directory='', plot=
                     color='teal')
         # plt.scatter(results.get('line_flows').index, np.ones(len(results.get('line_flows').index))*100, marker="_", color='tab:red',s=30)
         ax2.axhline(y=100, color='tab:red', linestyle='--')
-        if  max(results.get('line_flows')['loading_percent']) > 100:
-            ax2.set_ylim(0,max(results.get('line_flows')['loading_percent']) + 5)
-        else:
-            ax2.set_ylim(0,110)
         ax2.title.set_text('Line Loading')
         ax2.set_ylabel('Percentage')
         ax2.set_xlabel('Line')
         ax2.set_xticks(range(0, len(results.get('line_flows').index), 2))
+        if axis_values[3] != 0:
+            ax2.set_ylim(0, axis_values[3])
+        elif max(results.get('line_flows')['loading_percent']) > 110:
+            ax2.set_ylim(0,max(results.get('line_flows')['loading_percent']) + 5)
+        else:
+            ax2.set_ylim(0,110)
+            
+        ax2.tick_params(axis='x', labelsize=mpl.rcParams["xtick.labelsize"] - 2)
         ax2.grid(linestyle='--', linewidth=0.5, alpha=0.65)
         ax2.margins(x=0.025)
         
@@ -1553,14 +1573,17 @@ def plot_results(system, results, angle=False ,name='', save_directory='', plot=
                     color='darkgreen')
         # plt.scatter(results.get('transformer_flows').index, np.ones(len(results.get('transformer_flows').index))*100, marker="_", color='tab:red',s=60)
         ax3.axhline(y=100, color='tab:red', linestyle='--')
-        if  max(results.get('transformer_flows')['loading_percent']) > 100:
-            ax3.set_ylim(0,max(results.get('transformer_flows')['loading_percent']) + 5)
-        else:
-            ax3.set_ylim(0,110)
         ax3.title.set_text('Transformer Loading')
         ax3.set_ylabel('Percentage')
         ax3.set_xlabel('Transformer')
         ax3.set_xticks(range(0, len(results.get('transformer_flows').index), 1))
+        if axis_values[4] != 0:
+            ax3.set_ylim(0, axis_values[4])
+        elif  max(results.get('transformer_flows')['loading_percent']) > 110:
+            ax3.set_ylim(0,max(results.get('transformer_flows')['loading_percent']) + 5)
+        else:
+            ax3.set_ylim(0,110)
+        ax3.tick_params(axis='x', labelsize=mpl.rcParams["xtick.labelsize"] - 2)
         ax3.grid(linestyle='--', linewidth=0.5, alpha=0.65)
         ax3.margins(x=0.025)
         
@@ -1569,13 +1592,18 @@ def plot_results(system, results, angle=False ,name='', save_directory='', plot=
             ax4.bar(results.get('bus_results').index, results.get('bus_results')['delta_deg'], 
                         color='darkslateblue')
             ax4.axhline(y=0, color='darkslategray', linestyle='-')
+            ax4.title.set_text('Voltage Phase Angle')
             ax4.set_ylabel('Phase Angle [Deg.]')
             ax4.set_xlabel('Bus')
             ax4.set_xticks(range(0, len(results.get('bus_results').index), 2))
             ax4.grid(linestyle='--', linewidth=0.5, alpha=0.65)
             ax4.margins(x=0.025)
-            ax4.set_ylim(-(max(abs(results.get('bus_results')['delta_deg']))+1), 
+            if axis_values[2] != 0:
+                ax4.set_ylim(-axis_values[2], axis_values[2])
+            else:
+                ax4.set_ylim(-(max(abs(results.get('bus_results')['delta_deg']))+1), 
                          max(abs(results.get('bus_results')['delta_deg']))+1)
+    fig.tight_layout()
     
     if save_directory != '':
         fig.savefig(save_directory)
@@ -1586,6 +1614,10 @@ def plot_result_comparison(results1, results2, angle=False, name = '', fixed_y_a
     #The fixed y axis values list indices correspond to the following plot y limits:
     #0: voltage magnitude, 1: line loading, 2: transformer loading, 3: voltage angle
     #The same limit is set for positive and negative values
+    mpl.rcParams["axes.titlesize"] = 19
+    mpl.rcParams["axes.labelsize"] = 18
+    mpl.rcParams["xtick.labelsize"] = 15
+    mpl.rcParams["ytick.labelsize"] = 16
     
     #Bus voltages
     vmag1 = results1.get('bus_results')['vmag_pu'].to_numpy()
@@ -1629,8 +1661,8 @@ def plot_result_comparison(results1, results2, angle=False, name = '', fixed_y_a
     else:
         gs = gsp.GridSpec(2, 2)
     fig = plt.figure(dpi=200)
-    fig.set_figheight(11)
-    fig.set_figwidth(11)
+    fig.set_figheight(10)
+    fig.set_figwidth(12)
     if name != '':
         plt.title('%s\n\n' % name, fontweight='bold', fontsize=14)
         ax = plt.gca()
@@ -1644,7 +1676,7 @@ def plot_result_comparison(results1, results2, angle=False, name = '', fixed_y_a
     ax1 = fig.add_subplot(gs[0, :]) # row 0, col 0
     ax1.bar(np.arange(0,np.size(vmag_diff)), vmag_diff, color='darkblue')
     ax1.axhline(y=0, color='darkslategray', linestyle='-')
-    ax1.title.set_text('Difference in Bus Voltages')
+    ax1.title.set_text('Difference in Voltage Magnitude')
     ax1.set_ylabel('\u0394 [p.u.]')
     ax1.set_xlabel('Bus')
     ax1.set_xticks(range(0, np.size(vmag_diff), 2))
@@ -1661,10 +1693,11 @@ def plot_result_comparison(results1, results2, angle=False, name = '', fixed_y_a
         ax2 = fig.add_subplot(gs[1, 0])
     ax2.bar(np.arange(0,np.size(l_diff)), l_diff, color='teal')
     ax2.axhline(y=0, color='darkslategray', linestyle='-')
-    ax2.title.set_text('Difference in Line Loading Percentage')
+    ax2.title.set_text('Difference in Line Loading')
     ax2.set_ylabel('\u0394 [%]')
     ax2.set_xlabel('Line')
     ax2.set_xticks(range(0, np.size(l_diff), 2))
+    ax2.tick_params(axis='x', labelsize=mpl.rcParams["xtick.labelsize"] - 2)
     ax2.grid(linestyle='--', linewidth=0.5, alpha=0.65)
     ax2.margins(x=0.025)
     if fixed_y_axis_values[1] == 0:
@@ -1678,10 +1711,11 @@ def plot_result_comparison(results1, results2, angle=False, name = '', fixed_y_a
         ax3 = fig.add_subplot(gs[1,1])
     ax3.bar(np.arange(0,np.size(t_diff)), t_diff, color='darkgreen')
     ax3.axhline(y=0, color='darkslategray', linestyle='-')
-    ax3.title.set_text('Difference in Transformer Loading Percentage')
+    ax3.title.set_text('Difference in Transformer Loading')
     ax3.set_ylabel('\u0394 [%]')
     ax3.set_xlabel('Transformer')
     ax3.set_xticks(range(0, np.size(t_diff), 2))
+    ax3.tick_params(axis='x', labelsize=mpl.rcParams["xtick.labelsize"] - 2)
     ax3.grid(linestyle='--', linewidth=0.5, alpha=0.65)
     ax3.margins(x=0.025)
     if fixed_y_axis_values[2] == 0:
@@ -1702,6 +1736,9 @@ def plot_result_comparison(results1, results2, angle=False, name = '', fixed_y_a
         ax4.bar(np.arange(0,np.size(delta_diff)), delta_diff, color='darkslateblue')
         ax4.axhline(y=0, color='darkslategray', linestyle='-')
         ax4.set_ylabel('\u0394 [Deg.]')
+        # ax1.set_xlabel('')
+        # ax1.axes.get_xaxis().get_label().set_visible(False)
+        ax4.title.set_text('Difference in Voltage Phase Angle')
         ax4.set_xlabel('Bus')
         ax4.set_xticks(range(0, np.size(delta_diff), 2))
         ax4.grid(linestyle='--', linewidth=0.5, alpha=0.65)
@@ -1711,7 +1748,7 @@ def plot_result_comparison(results1, results2, angle=False, name = '', fixed_y_a
         else:
             ax4.set_ylim(-fixed_y_axis_values[3], fixed_y_axis_values[3])
         
-    
+    fig.tight_layout()
     return
 
 

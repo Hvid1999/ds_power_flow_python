@@ -47,10 +47,12 @@ p_fact_tweak = np.copy(participation_factors)
 
 results_ss = pf.run_power_flow(system_ss, enforce_q_limits=True)
 results_ds = pf.run_power_flow(system_ds, enforce_q_limits=True)
+#%%
+# name = ('Case 3\n%s\nSingle Slack Bus') % desc
+pf.plot_results(system_ss, results_ss, angle=True, axis_values=[-0.87, 1.08, 40, 120, 120])
+# name = ('Case 4\n%s\nDistributed Slack Bus') % desc
+pf.plot_results(system_ds, results_ds, angle=True, axis_values=[-0.87, 1.08, 40, 120, 120])
 
-pf.plot_results(system_ss, results_ss, angle=True, name = ('Case 4\n%s\nSingle Slack Bus') % desc)
-pf.plot_results(system_ds, results_ds, angle=True, name = ('Case 4\n%s\nDistributed Slack Bus') % desc)
 
-
-pf.plot_result_comparison(results_ss, results_ds, angle=True, name = ('Case 4\n%s\nSingle Slack vs. Distributed Slack') % desc)
+# pf.plot_result_comparison(results_ss, results_ds, angle=True, name = ('Case 4\n%s\nSingle Slack vs. Distributed Slack') % desc)
 

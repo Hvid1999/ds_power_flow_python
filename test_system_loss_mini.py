@@ -116,8 +116,12 @@ print(participation_factors)
 
 results_base = pf.run_power_flow(system_base, enforce_q_limits=True, print_results=False)
 phi_base = results_base.get('total_losses_pu')
-pf.plot_results(system_base, results_base, angle = True, name = ('Equal Factors - Losses: %f\n%s' % (phi_base,desc)))
-pf.plot_results(system, results, angle = True, name = ('After Gradient Steps - Losses: %f\n%s' % (phi,desc)))
+
+#%%
+# name = ('Equal Factors - Losses: %f\n%s' % (phi_base,desc))
+pf.plot_results(system_base, results_base, angle = True, axis_values=[-0.93,1.095,20,0,0])
+# name = ('After Gradient Steps - Losses: %f\n%s' % (phi,desc))
+pf.plot_results(system, results, angle = True, axis_values=[-0.93,1.095,20,0,0])
 
 
 #%%
@@ -138,7 +142,7 @@ results = pf.run_power_flow(system, enforce_q_limits=True, print_results=False)
 equal_factors_loss = results.get('total_losses_pu')
 min_loss = equal_factors_loss
 
-num_attempts = 300
+num_attempts = 100
 
 for n in range(1,num_attempts):  
     print(n)
@@ -152,4 +156,7 @@ for n in range(1,num_attempts):
         best_factors = np.copy(participation_factors)
 print('\nFinished.\nParticipation Factors:')
 print(best_factors)
-pf.plot_results(system, results, angle = True, name = ('After Randomized Search (n = %d) - Losses: %f\n%s' % (num_attempts,min_loss,desc)))
+print('Losses:')
+print(min_loss)
+# name = ('After Randomized Search (n = %d) - Losses: %f\n%s' % (num_attempts,min_loss,desc))
+pf.plot_results(system, results, angle = True, axis_values=[-0.93,1.095,20,0,0])
